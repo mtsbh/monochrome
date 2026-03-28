@@ -7,8 +7,6 @@ services:
             args:
                 - AUTH_ENABLED=${AUTH_ENABLED}
                 - AUTH_SECRET=${AUTH_SECRET}
-                - APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT}
-                - APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID}
                 - POCKETBASE_URL=${POCKETBASE_URL}
                 - SESSION_MAX_AGE=${SESSION_MAX_AGE}
         container_name: monochrome

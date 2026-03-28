@@ -3195,7 +3195,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         customDbModal.querySelector('.modal-overlay').addEventListener('click', closeCustomDbModal);
 
         customDbSaveBtn.addEventListener('click', () => {
-            if (!pbFromEnv && customPbUrlInput) {
+            if (customPbUrlInput) {
                 const pbUrl = customPbUrlInput.value.trim();
                 if (pbUrl) {
                     localStorage.setItem('monochrome-pocketbase-url', pbUrl);
@@ -3211,8 +3211,10 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         customDbResetBtn.addEventListener('click', () => {
             if (confirm('Reset custom PocketBase URL to default?')) {
                 localStorage.removeItem('monochrome-pocketbase-url');
-                // Also clear the active-URL tracker so config.js re-evaluates on next load
+                // Clear active-URL tracker and stale auth so config.js starts fresh
                 localStorage.removeItem('monochrome-pb-url-active');
+                localStorage.removeItem('pb_auth');
+                localStorage.removeItem('pocketbase_auth');
                 alert('Settings reset. Reloading...');
                 window.location.reload();
             }

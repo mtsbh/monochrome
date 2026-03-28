@@ -102,7 +102,7 @@ export default function authGatePlugin() {
                     process.exit(1);
                 }
 
-                console.log(`Auth gate enabled (Project: ${env.APPWRITE_PROJECT_ID})`);
+                console.log(`Auth gate enabled (PocketBase: ${env.POCKETBASE_URL ?? 'default'})`);
 
                 server.middlewares.use(
                     cookieSession({
