@@ -64,7 +64,15 @@ const syncManager = {
                     return null;
                 }
             } catch (error) {
-                console.error('[PocketBase] Failed to get user:', error);
+                // 404 usually means the collection doesn't exist on this PocketBase instance
+                if (error?.status === 404 || error?.response?.code === 404) {
+                    console.warn(
+                        '[PocketBase] The "DB_users" collection was not found on your PocketBase instance. ' +
+                        'Cloud sync is disabled. Please create the required collections — see DOCKER.md for setup instructions.'
+                    );
+                } else {
+                    console.error('[PocketBase] Failed to get user:', error);
+                }
                 return null;
             } finally {
                 this._getUserRecordPromise = null;

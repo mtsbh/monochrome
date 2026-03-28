@@ -21,8 +21,6 @@ function parseBody(req) {
 
 function buildInjectionScript(env) {
     const AUTH_ENABLED = (env.AUTH_ENABLED ?? 'false') !== 'false';
-    const APPWRITE_ENDPOINT = env.APPWRITE_ENDPOINT;
-    const APPWRITE_PROJECT_ID = env.APPWRITE_PROJECT_ID;
     const POCKETBASE_URL = env.POCKETBASE_URL;
     const AUTH_GOOGLE_ENABLED = env.AUTH_GOOGLE_ENABLED;
     const AUTH_EMAIL_ENABLED = env.AUTH_EMAIL_ENABLED;
@@ -39,8 +37,6 @@ function buildInjectionScript(env) {
     if (Object.keys(authProviderOverrides).length > 0) {
         flags.push(`window.__AUTH_PROVIDERS__=${JSON.stringify(authProviderOverrides)}`);
     }
-    if (APPWRITE_ENDPOINT) flags.push(`window.__APPWRITE_ENDPOINT__=${JSON.stringify(APPWRITE_ENDPOINT)}`);
-    if (APPWRITE_PROJECT_ID) flags.push(`window.__APPWRITE_PROJECT_ID__=${JSON.stringify(APPWRITE_PROJECT_ID)}`);
     if (POCKETBASE_URL) flags.push(`window.__POCKETBASE_URL__=${JSON.stringify(POCKETBASE_URL)}`);
 
     return flags.length > 0 ? `<script>${flags.join(';')};</script>` : null;

@@ -1058,46 +1058,28 @@
             <div class="modal-overlay"></div>
             <div class="modal-content">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
-                    <h3 style="margin: 0">Custom Database/Auth</h3>
+                    <h3 style="margin: 0">Custom PocketBase</h3>
                     <button
                         id="custom-db-reset"
                         class="btn-secondary danger"
                         style="padding: 0.4rem 0.8rem; font-size: 0.8rem"
                     >
-                        Reset to Defaults
+                        Reset to Default
                     </button>
                 </div>
                 <p style="font-size: 0.9rem; color: var(--muted-foreground); margin-bottom: 1rem">
-                    Configure custom PocketBase and Appwrite instances. Leave empty to use defaults.
-                    <br />
-                    A Guide To Set This Up Can Be Found
+                    Point the app at your own PocketBase instance for account sync, playlists, and library. Leave empty to use the default shared instance.
+                    <br /><br />
+                    Your PocketBase must have <code>DB_users</code> and <code>public_playlists</code> collections and auth configured. See
                     <a
                         href="https://github.com/monochrome-music/monochrome/blob/main/DOCKER.md"
                         style="text-decoration: underline"
-                        >Here</a
-                    >.
+                        >DOCKER.md</a
+                    > for setup details.
                 </p>
                 <div style="margin-bottom: 1rem">
                     <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">PocketBase URL</label>
-                    <input type="url" id="custom-pb-url" class="template-input" placeholder="https://data.samidy.xyz" />
-                </div>
-                <div style="margin-bottom: 1rem">
-                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Endpoint</label>
-                    <input
-                        type="url"
-                        id="custom-appwrite-endpoint"
-                        class="template-input"
-                        placeholder="https://auth.samidy.com/v1"
-                    />
-                </div>
-                <div style="margin-bottom: 1rem">
-                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Project ID</label>
-                    <input
-                        type="text"
-                        id="custom-appwrite-project"
-                        class="template-input"
-                        placeholder="auth-for-monochrome"
-                    />
+                    <input type="url" id="custom-pb-url" class="template-input" placeholder="https://pb.yourdomain.com" />
                 </div>
                 <div class="modal-actions">
                     <button id="custom-db-cancel" class="btn-secondary">Cancel</button>

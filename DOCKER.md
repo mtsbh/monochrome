@@ -96,27 +96,69 @@ Override files can extend existing services (add labels, env vars, networks) and
 
 The application is configured via environment variables. Copy `.env.example` to `.env` and edit it to match your setup.
 
-### Authentication (Appwrite)
+### Authentication & Database (PocketBase)
 
-Monochrome uses Appwrite for user authentication. While it defaults to official instances, you can use your own self-hosted Appwrite instance:
-
-1. Create a project in Appwrite.
-2. Enable the **Google** or **Email/Password** providers in the Appwrite Console.
-3. Set these variables in your `.env`:
-    - `APPWRITE_ENDPOINT`: Your Appwrite API endpoint (e.g., `https://auth.yourdomain.com/v1`).
-    - `APPWRITE_PROJECT_ID`: Your Appwrite project ID (e.g., `auth-for-monochrome`).
-
-### Database (PocketBase)
-
-Monochrome uses PocketBase to store user data (playlists, favorites, profiles, etc.). You can run it alongside Monochrome using the `pocketbase` profile:
+Monochrome uses PocketBase for **both** authentication and user data (playlists, favourites, profiles, etc.). You can run it alongside Monochrome using the `pocketbase` profile:
 
 ```bash
 docker compose --profile pocketbase up -d
 ```
 
-#### PocketBase Schema Note
+Set the `POCKETBASE_URL` environment variable to point the app at your instance:
 
-If you are setting up a new PocketBase collection for user data, ensure it has a field named `firebase_id` (this is a legacy name we use when we first started the accounts system, we used firebase. and im too lazy to change it so yea fuck you).
+```env
+POCKETBASE_URL=https://pb.yourdomain.com
+```
+
+For Netlify deployments, add `POCKETBASE_URL` as a build environment variable in your Netlify site settings so it is baked into the built HTML at deploy time. Alternatively, users can configure it at runtime via **Settings → Custom PocketBase**.
+
+#### Required PocketBase Collections
+
+Your PocketBase instance must have these collections created before sync will work:
+
+| Collection | Purpose |
+|---|---|
+| `users` | Built-in PocketBase auth collection (created automatically) |
+| `DB_users` | Per-user library, history, playlists, profile data |
+| `public_playlists` | Publicly shared playlists |
+
+##### `DB_users` fields (minimum required)
+
+| Field | Type | Notes |
+|---|---|---|
+| `firebase_id` | Plain text | Stores the PocketBase user `id` (legacy name) |
+| `username` | Plain text | |
+| `display_name` | Plain text | |
+| `library` | JSON / Plain text | Serialised JSON |
+| `history` | JSON / Plain text | Serialised JSON |
+| `user_playlists` | JSON / Plain text | Serialised JSON |
+| `user_folders` | JSON / Plain text | Serialised JSON |
+| `avatar_url` | URL | Optional |
+| `banner` | URL | Optional |
+| `status` | Plain text | Optional |
+| `about` | Plain text | Optional |
+| `website` | URL | Optional |
+| `lastfm_username` | Plain text | Optional |
+| `privacy` | JSON / Plain text | Optional |
+| `favorite_albums` | JSON / Plain text | Optional |
+
+##### `public_playlists` fields (minimum required)
+
+| Field | Type |
+|---|---|
+| `uuid` | Plain text |
+| `uid` | Plain text |
+| `firebase_id` | Plain text |
+| `title` | Plain text |
+| `tracks` | JSON / Plain text |
+| `isPublic` | Boolean |
+
+#### Auth Providers
+
+In the PocketBase admin console, enable whichever auth providers you want under **Settings → Auth providers**:
+
+- **Email / Password** — works out of the box on a fresh PocketBase instance.
+- **Google / GitHub / Discord** — requires OAuth2 app credentials from each provider.
 
 ---
 
