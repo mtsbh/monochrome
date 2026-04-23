@@ -226,6 +226,8 @@ export const getExtensionFromBlob = async (blob) => {
 
     if (format === 'mp4') {
         if (blob.type.includes('video')) return 'mp4';
+        // FLAC codec inside ISOBMFF container — TIDAL HI_RES_LOSSLESS
+        if (blob.type === 'audio/flac') return 'flac';
         return 'm4a';
     }
     if (format) return format;

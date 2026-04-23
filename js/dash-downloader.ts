@@ -20,6 +20,7 @@ interface DashManifest {
     segments: DashSegment[];
     repId: string | null;
     mimeType: string | null;
+    codecs: string | null;
 }
 
 export class DashDownloader {
@@ -62,7 +63,10 @@ export class DashDownloader {
 
         // 2. Generate URLs
         const urls = this.generateSegmentUrls(manifest);
-        const mimeType = manifest.mimeType || 'audio/mp4';
+        // TIDAL serves FLAC inside an ISOBMFF container (mimeType=audio/mp4, codecs=flac).
+        // Use audio/flac so getExtensionFromBlob resolves the correct .flac extension.
+        const isFlac = manifest.codecs?.toLowerCase() === 'flac';
+        const mimeType = isFlac ? 'audio/flac' : (manifest.mimeType || 'audio/mp4');
 
         // 3. Download Segments
         const chunks: ArrayBuffer[] = [];
@@ -194,6 +198,7 @@ export class DashDownloader {
             segments,
             repId,
             mimeType: audioSet.getAttribute('mimeType'),
+            codecs: rep.getAttribute('codecs') ?? audioSet.getAttribute('codecs'),
         };
     }
 
