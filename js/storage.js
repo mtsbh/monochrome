@@ -106,7 +106,7 @@ export const apiSettings = {
 
             const isBlockedInstance = (item) => {
                 const url = typeof item === 'string' ? item : item.url;
-                return url && /\.squid\.wtf/i.test(url);
+                return url && (/\.squid\.wtf/i.test(url) || /tidal-api\.binimum\.org/i.test(url));
             };
 
             if (data.api && Array.isArray(data.api)) {

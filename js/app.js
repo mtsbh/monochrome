@@ -107,7 +107,7 @@ async function loadDownloadsModule() {
 
 async function fetchcontributors() {
     try {
-        const response = await fetch('https://api.samidy.com/api/contributors');
+        const response = await fetch('/api/contributors');
         if (!response.ok) return;
         const data1 = await response.json();
         if (!Array.isArray(data1)) return;
