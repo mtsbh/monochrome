@@ -16,7 +16,9 @@
       "Bash(git add:*)",
       "Bash(grep -r createOAuth2Session d:/projects/monochrome/node_modules/appwrite/ --include=*.js -l)",
       "Bash(find d:/projects/monochrome -name *.js -path */appwrite/*)",
-      "Bash(find d:/projects/monochrome/dist -name *.js)"
+      "Bash(find d:/projects/monochrome/dist -name *.js)",
+      "mcp__Windows-MCP__Scrape",
+      "Bash(python3)"
     ]
   }
 }

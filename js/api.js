@@ -80,7 +80,7 @@ export class LosslessAPI {
                     throw new Error(`No user API instances configured for type: ${type}`);
                 }
             } else if (instances.length === 0) {
-                throw new Error(`No API instances configured for type: ${type}`);
+                return [];
             }
 
             if (options.minVersion) {
@@ -218,8 +218,19 @@ export class LosslessAPI {
             }
         }
 
+        const firstInstances = await getInstances(false);
+
+        if (firstInstances.length === 0) {
+            // No proxy instances available — try HiFiClient directly
+            try {
+                return await HiFiClient.instance.query(relativePath);
+            } catch (err) {
+                throw new Error(`No API instances configured for type: ${type}`);
+            }
+        }
+
         try {
-            return await tryInstances(await getInstances(false));
+            return await tryInstances(firstInstances);
         } catch (error) {
             if (type === 'streaming' || options.userInstancesOnly) {
                 throw error;
