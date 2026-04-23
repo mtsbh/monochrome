@@ -1653,7 +1653,23 @@ export class LosslessAPI {
         let streamUrl;
         let manifestRgInfo = null;
 
-        const lookup = await this.getTrack(id, quality, { adaptive: this.shouldUseAdaptiveTrackManifest(download) });
+        const qualityFallbackChain = ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH'];
+        const startIndex = qualityFallbackChain.indexOf(normalizeQualityToken(quality) || quality);
+        const qualitiesToTry = startIndex >= 0 ? qualityFallbackChain.slice(startIndex) : [quality];
+
+        let lookup;
+        let lastError;
+        for (const q of qualitiesToTry) {
+            try {
+                lookup = await this.getTrack(id, q, { adaptive: this.shouldUseAdaptiveTrackManifest(download) });
+                if (q !== quality) console.info(`[quality fallback] ${quality} unavailable, using ${q}`);
+                break;
+            } catch (err) {
+                lastError = err;
+                console.warn(`[quality fallback] ${q} failed, trying next...`);
+            }
+        }
+        if (!lookup) throw lastError || new Error('Could not resolve stream URL');
 
         if (lookup.originalTrackUrl) {
             streamUrl = lookup.originalTrackUrl;
