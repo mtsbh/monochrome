@@ -141,11 +141,9 @@ export class LosslessAPI {
                             .clone()
                             .json()
                             .catch(() => null);
-                        if (errorData?.subStatus === 11002) {
-                            console.warn(`Auth failed on ${baseUrl}. Trying next instance...`);
-                            instanceIndex++;
-                            continue;
-                        }
+                        console.warn(`Auth failed (subStatus: ${errorData?.subStatus}) on ${baseUrl}. Trying next instance...`);
+                        instanceIndex++;
+                        continue;
                     }
 
                     if (response.status >= 500) {
@@ -163,6 +161,13 @@ export class LosslessAPI {
                     instanceIndex++;
                     await delay(200);
                 }
+            }
+
+            // All proxy instances failed — fall back to direct TIDAL API via HiFiClient
+            try {
+                return await HiFiClient.instance.query(relativePath);
+            } catch (hifiErr) {
+                console.warn(`HiFiClient fallback also failed for ${relativePath}:`, hifiErr);
             }
 
             throw lastError || new Error(`All API instances failed for: ${relativePath}`);
