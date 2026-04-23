@@ -463,16 +463,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (helpBtn && helpModal) {
         helpBtn.addEventListener('click', () => {
             helpModal.classList.add('active');
+            const iframe = helpModal.querySelector('iframe');
+            if (iframe && !iframe.src) {
+                iframe.src = iframe.dataset.src;
+            }
         });
 
         const hideHelpModal = () => {
             helpModal.classList.remove('active');
             const iframe = helpModal.querySelector('iframe');
-            if (iframe) {
-                const src = iframe.src;
-                iframe.src = '';
-                iframe.src = src;
-            }
+            if (iframe) iframe.src = '';
         };
 
         closeHelpModal?.addEventListener('click', hideHelpModal);
