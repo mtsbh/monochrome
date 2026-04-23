@@ -1901,16 +1901,46 @@ export class LosslessAPI {
 
             return blob;
         } catch (error) {
-            if (error.name === 'AbortError') {
-                throw error;
+            if (error.name === 'AbortError') throw error;
+            if (error instanceof FfmpegError || error.code === 'MP3_ENCODING_FAILED') throw error;
+            if (error.message === RATE_LIMIT_ERROR_MESSAGE) throw error;
+
+            console.warn('Download via proxy instances failed, trying v2 manifest fallback:', error);
+
+            // Fallback: use TIDAL v2 OpenAPI trackManifests directly (app token, no proxy needed)
+            try {
+                const manifestResponse = await HiFiClient.instance.getTrackManifest(
+                    Number(id),
+                    { usage: 'DOWNLOAD', formats: ['FLAC_HIRES', 'FLAC', 'AACLC', 'HEAACV1'] },
+                    options.signal
+                );
+                const manifestData = await manifestResponse.json();
+                const manifestUri = manifestData?.data?.data?.attributes?.uri;
+
+                if (!manifestUri) throw new Error('No manifest URI in v2 response');
+
+                const downloader = new DashDownloader();
+                const blob = await downloader.downloadDashStream(getProxyUrl(manifestUri), {
+                    signal: options.signal,
+                    onProgress: options.onProgress,
+                    calculateDashBytes: options.calculateDashBytes ?? true,
+                });
+
+                if (options.triggerDownload ?? true) {
+                    const detectedExtension = await getExtensionFromBlob(blob);
+                    const ext = filename?.split('.').pop()?.toLowerCase();
+                    const finalFilename =
+                        ext && ext !== detectedExtension
+                            ? filename.replace(/\.[^.]+$/, `.${detectedExtension}`)
+                            : filename;
+                    triggerDownload(blob, finalFilename);
+                }
+
+                return blob;
+            } catch (fallbackError) {
+                console.error('v2 manifest fallback also failed:', fallbackError);
             }
-            console.error('Download failed:', error);
-            if (error instanceof FfmpegError || error.code === 'MP3_ENCODING_FAILED') {
-                throw error;
-            }
-            if (error.message === RATE_LIMIT_ERROR_MESSAGE) {
-                throw error;
-            }
+
             throw new Error('Download failed. The stream may require a proxy.');
         }
     }
