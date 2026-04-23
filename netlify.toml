@@ -8,6 +8,9 @@
 [functions]
   directory = "netlify/functions"
 
+[edge_functions]
+  directory = "netlify/edge-functions"
+
 [[redirects]]
   from = "/api/label"
   to = "/.netlify/functions/label"

@@ -475,6 +475,11 @@ class AudioContextManager {
 
         this.audio = audioElement;
 
+        if (isIos) {
+            console.log('[AudioContext] Skipping Web Audio initialization on iOS for lock screen compatibility');
+            return;
+        }
+
         try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;
 
