@@ -8,8 +8,9 @@
 [functions]
   directory = "netlify/functions"
 
-[edge_functions]
-  directory = "netlify/edge-functions"
+[[edge_functions]]
+  path = "/api/audio-proxy"
+  function = "audio-proxy"
 
 [[redirects]]
   from = "/api/label"

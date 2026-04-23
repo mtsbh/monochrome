@@ -49,5 +49,3 @@ export default async (request) => {
         headers,
     });
 };
-
-export const config = { path: '/api/audio-proxy' };
