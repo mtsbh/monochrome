@@ -23,7 +23,7 @@ import { syncManager } from './accounts/pocketbase.js';
 import { waveformGenerator } from './waveform.js';
 import { audioContextManager } from './audio-context.js';
 import { hapticLongPress, hapticMedium, hapticLight } from './haptics.js';
-import { SVG_BIN, SVG_MUTE, SVG_PAUSE, SVG_PLAY, SVG_VOLUME, SVG_CHECKBOX, SVG_CHECKBOX_CHECKED } from './icons.js';
+import { SVG_BIN, SVG_MUSIC, SVG_MUTE, SVG_PAUSE, SVG_PLAY, SVG_VOLUME, SVG_CHECKBOX, SVG_CHECKBOX_CHECKED } from './icons.js';
 import { partyManager } from './listening-party.js';
 import { MusicAPI } from './music-api.js';
 import { LyricsManager } from './lyrics.js';
@@ -177,77 +177,103 @@ function toggleTrackSelection(trackItem, ctrlHeld, shiftHeld) {
 }
 
 async function showMultiSelectPlaylistModal(tracks) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.style.cssText =
-        'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 10000;';
-    modal.innerHTML = `
-        <div class="modal-content" style="background: var(--card); border-radius: var(--radius); padding: 1.5rem; min-width: 350px; max-width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
-                <h3 style="margin: 0;">Add to Playlist</h3>
-                <button class="modal-close" style="background: none; border: none; color: var(--foreground); font-size: 1.5rem; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
-            </div>
-            <div class="playlist-body" style="max-height: 300px; overflow-y: auto;">
-                <div class="create-new-playlist" style="padding: 12px; cursor: pointer; border-bottom: 1px solid var(--border); color: var(--primary); font-weight: 500;">
-                    + Create new playlist
-                </div>
-                <div class="playlist-list"></div>
-            </div>
-        </div>
-    `;
+    const modal = document.getElementById('playlist-select-modal');
+    const grid = document.getElementById('playlist-select-grid');
+    const footer = document.getElementById('playlist-select-footer');
+    const closeBtn = document.getElementById('playlist-select-close');
+    const searchInput = document.getElementById('playlist-select-search');
+    const sortSelect = document.getElementById('playlist-select-sort');
+    const createRow = document.getElementById('playlist-select-create');
+    const overlay = modal.querySelector('.modal-overlay');
 
-    const closeModal = () => {
-        modal.remove();
-        document.body.style.overflow = '';
+    const playlists = await db.getPlaylists(true);
+
+    const sortFns = {
+        az: (a, b) => a.name.localeCompare(b.name),
+        za: (a, b) => b.name.localeCompare(a.name),
+        date: (a, b) => b.createdAt - a.createdAt,
+        recent: (a, b) => b.updatedAt - a.updatedAt,
     };
 
-    modal.querySelector('.modal-close').addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal();
-    });
+    const renderGrid = (query = '', sortKey = 'az') => {
+        const sorted = [...playlists].sort(sortFns[sortKey] || sortFns.az);
+        const filtered = query
+            ? sorted.filter(p => p.name.toLowerCase().includes(query.toLowerCase()))
+            : sorted;
 
-    document.body.appendChild(modal);
-    document.body.style.overflow = 'hidden';
-
-    await db.getPlaylists(true).then((playlists) => {
-        const listEl = modal.querySelector('.playlist-list');
-        if (playlists.length === 0) {
-            listEl.innerHTML = '<div style="padding: 12px; color: var(--muted-foreground);">No playlists yet</div>';
-        } else {
-            listEl.innerHTML = playlists
-                .map(
-                    (p) => `
-                <div class="playlist-item" data-playlist-id="${p.id}" style="padding: 12px; cursor: pointer; border-bottom: 1px solid var(--border);">
-                    <span>${escapeHtml(p.name)}</span>
-                    <span style="color: var(--muted-foreground); font-size: 0.85rem; margin-left: 8px;">${p.tracks?.length || 0} tracks</span>
+        grid.innerHTML = filtered.map(p => {
+            const coverSrc = p.cover || (p.images && p.images[0]);
+            const coverHtml = coverSrc
+                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy">`
+                : `<div class="playlist-select-card-placeholder">${SVG_MUSIC(24)}</div>`;
+            return `
+                <div class="playlist-select-card" data-id="${p.id}" data-name="${escapeHtml(p.name)}">
+                    ${coverHtml}
+                    <div class="playlist-select-card-info">
+                        <div class="playlist-select-card-name">${escapeHtml(p.name)}</div>
+                        <div class="playlist-select-card-count">${p.numberOfTracks ?? p.tracks?.length ?? 0} tracks</div>
+                    </div>
                 </div>
-            `
-                )
-                .join('');
+            `;
+        }).join('');
+
+        footer.textContent = `${filtered.length} playlist${filtered.length !== 1 ? 's' : ''} · Type to filter`;
+    };
+
+    searchInput.value = '';
+    sortSelect.value = 'az';
+    renderGrid();
+
+    const closeModal = () => {
+        modal.classList.remove('active');
+        cleanup();
+    };
+
+    const handleGridClick = async (e) => {
+        const card = e.target.closest('.playlist-select-card');
+        if (!card) return;
+
+        const playlistId = card.dataset.id;
+        const playlistName = card.dataset.name;
+        for (const track of tracks) {
+            await db.addTrackToPlaylist(playlistId, track);
         }
+        await syncManager.syncUserPlaylist(await db.getPlaylist(playlistId), 'update');
+        showNotification(`Added ${tracks.length} tracks to playlist: ${playlistName}`);
+        closeModal();
+    };
 
-        listEl.querySelectorAll('.playlist-item').forEach((item) => {
-            item.addEventListener('click', async () => {
-                const playlistId = item.dataset.playlistId;
-                for (const track of tracks) {
-                    await db.addTrackToPlaylist(playlistId, track);
-                }
-                await syncManager.syncUserPlaylist(await db.getPlaylist(playlistId), 'update');
-                showNotification(`Added ${tracks.length} tracks to playlist`);
-                closeModal();
-            });
-        });
-    });
+    const handleSearch = () => renderGrid(searchInput.value, sortSelect.value);
+    const handleSort = () => renderGrid(searchInput.value, sortSelect.value);
 
-    modal.querySelector('.create-new-playlist').addEventListener('click', async () => {
+    const handleCreateClick = () => {
         const name = prompt('Playlist name:');
         if (name) {
-            await db.createPlaylist(name, tracks).then((_playlist) => {
+            db.createPlaylist(name, tracks).then(() => {
                 showNotification(`Created playlist "${name}" with ${tracks.length} tracks`);
                 closeModal();
             });
         }
-    });
+    };
+
+    const cleanup = () => {
+        closeBtn.removeEventListener('click', closeModal);
+        overlay.removeEventListener('click', closeModal);
+        grid.removeEventListener('click', handleGridClick);
+        searchInput.removeEventListener('input', handleSearch);
+        sortSelect.removeEventListener('change', handleSort);
+        createRow.removeEventListener('click', handleCreateClick);
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', closeModal);
+    grid.addEventListener('click', handleGridClick);
+    searchInput.addEventListener('input', handleSearch);
+    sortSelect.addEventListener('change', handleSort);
+    createRow.addEventListener('click', handleCreateClick);
+
+    modal.classList.add('active');
+    searchInput.focus();
 }
 
 const playPauseBtn = document.querySelector('.now-playing-bar .play-pause-btn');
@@ -1029,123 +1055,136 @@ function initializeSmoothSliders(player) {
 // Standalone function to show add to playlist modal
 export async function showAddToPlaylistModal(track) {
     const modal = document.getElementById('playlist-select-modal');
-    const list = document.getElementById('playlist-select-list');
-    const cancelBtn = document.getElementById('playlist-select-cancel');
+    const grid = document.getElementById('playlist-select-grid');
+    const footer = document.getElementById('playlist-select-footer');
+    const closeBtn = document.getElementById('playlist-select-close');
+    const searchInput = document.getElementById('playlist-select-search');
+    const sortSelect = document.getElementById('playlist-select-sort');
+    const createRow = document.getElementById('playlist-select-create');
     const overlay = modal.querySelector('.modal-overlay');
 
-    const renderModal = async () => {
-        const playlists = await db.getPlaylists(true);
+    const playlists = await db.getPlaylists(true);
 
-        const trackId = track.id;
-        const playlistsWithTrack = new Set();
+    const trackId = track.id;
+    const playlistsWithTrack = new Set(
+        playlists.filter(p => p.tracks && p.tracks.some(t => t.id == trackId)).map(p => p.id)
+    );
 
-        for (const playlist of playlists) {
-            if (playlist.tracks && playlist.tracks.some((t) => t.id == trackId)) {
-                playlistsWithTrack.add(playlist.id);
-            }
-        }
-
-        list.innerHTML =
-            `
-            <div class="modal-option create-new-option" style="border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;">
-                <span style="font-weight: 600; color: var(--primary);">+ Create New Playlist</span>
-            </div>
-        ` +
-            playlists
-                .map((p) => {
-                    const alreadyContains = playlistsWithTrack.has(p.id);
-                    return `
-                <div class="modal-option ${alreadyContains ? 'already-contains' : ''}" data-id="${p.id}">
-                    <span>${p.name}</span>
-                    ${
-                        alreadyContains
-                            ? `<button class="remove-from-playlist-btn-modal" title="Remove from playlist" style="background: transparent; border: none; color: inherit; cursor: pointer; padding: 4px; display: flex; align-items: center;">${SVG_BIN(20)}</button>`
-                            : ''
-                    }
-                </div>
-            `;
-                })
-                .join('');
-        return true;
+    const sortFns = {
+        az: (a, b) => a.name.localeCompare(b.name),
+        za: (a, b) => b.name.localeCompare(a.name),
+        date: (a, b) => b.createdAt - a.createdAt,
+        recent: (a, b) => b.updatedAt - a.updatedAt,
     };
 
-    if (!(await renderModal())) return;
+    const renderGrid = (query = '', sortKey = 'az') => {
+        const sorted = [...playlists].sort(sortFns[sortKey] || sortFns.az);
+        const filtered = query
+            ? sorted.filter(p => p.name.toLowerCase().includes(query.toLowerCase()))
+            : sorted;
+
+        grid.innerHTML = filtered.map(p => {
+            const alreadyIn = playlistsWithTrack.has(p.id);
+            const coverSrc = p.cover || (p.images && p.images[0]);
+            const coverHtml = coverSrc
+                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy">`
+                : `<div class="playlist-select-card-placeholder">${SVG_MUSIC(24)}</div>`;
+            return `
+                <div class="playlist-select-card${alreadyIn ? ' already-in' : ''}" data-id="${p.id}" data-name="${escapeHtml(p.name)}">
+                    ${coverHtml}
+                    <div class="playlist-select-card-info">
+                        <div class="playlist-select-card-name">${escapeHtml(p.name)}</div>
+                        <div class="playlist-select-card-count">${p.numberOfTracks ?? p.tracks?.length ?? 0} tracks</div>
+                    </div>
+                    ${alreadyIn ? `<span class="playlist-select-badge" data-remove="${p.id}">✓</span>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        footer.textContent = `${filtered.length} playlist${filtered.length !== 1 ? 's' : ''} · Type to filter`;
+    };
+
+    searchInput.value = '';
+    sortSelect.value = 'az';
+    renderGrid();
 
     const closeModal = () => {
         modal.classList.remove('active');
         cleanup();
     };
 
-    const handleOptionClick = async (e) => {
-        const removeBtn = e.target.closest('.remove-from-playlist-btn-modal');
-        const option = e.target.closest('.modal-option');
+    const handleGridClick = async (e) => {
+        const badge = e.target.closest('.playlist-select-badge');
+        const card = e.target.closest('.playlist-select-card');
 
-        if (!option) return;
-
-        if (option.classList.contains('create-new-option')) {
-            closeModal();
-            const createModal = document.getElementById('playlist-modal');
-            document.getElementById('playlist-modal-title').textContent = 'Create Playlist';
-            document.getElementById('playlist-name-input').value = '';
-            document.getElementById('playlist-cover-input').value = '';
-            document.getElementById('playlist-cover-file-input').value = '';
-            document.getElementById('playlist-description-input').value = '';
-            createModal.dataset.editingId = '';
-            document.getElementById('import-section').style.display = 'none';
-
-            // Reset cover upload state
-            const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
-            const coverUrlInput = document.getElementById('playlist-cover-input');
-            const coverToggleUrlBtn = document.getElementById('playlist-cover-toggle-url-btn');
-            if (coverUploadBtn) {
-                coverUploadBtn.style.flex = '1';
-                coverUploadBtn.style.display = 'flex';
-            }
-            if (coverUrlInput) coverUrlInput.style.display = 'none';
-            if (coverToggleUrlBtn) {
-                coverToggleUrlBtn.textContent = 'or URL';
-                coverToggleUrlBtn.title = 'Switch to URL input';
-            }
-
-            // Pass track
-            createModal._pendingTracks = [track];
-
-            createModal.classList.add('active');
-            document.getElementById('playlist-name-input').focus();
+        if (badge) {
+            e.stopPropagation();
+            const playlistId = badge.dataset.remove;
+            const playlist = playlists.find(p => p.id === playlistId);
+            await db.removeTrackFromPlaylist(playlistId, track.id);
+            const updated = await db.getPlaylist(playlistId);
+            await syncManager.syncUserPlaylist(updated, 'update');
+            playlistsWithTrack.delete(playlistId);
+            renderGrid(searchInput.value, sortSelect.value);
+            showNotification(`Removed from playlist: ${playlist?.name ?? ''}`);
             return;
         }
 
-        const playlistId = option.dataset.id;
+        if (!card || card.classList.contains('already-in')) return;
 
-        if (removeBtn) {
-            e.stopPropagation();
-            await db.removeTrackFromPlaylist(playlistId, track.id);
-            const updatedPlaylist = await db.getPlaylist(playlistId);
-            await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
-            showNotification(`Removed from playlist: ${option.querySelector('span').textContent}`);
-            await renderModal();
-        } else {
-            if (option.classList.contains('already-contains')) return;
+        const playlistId = card.dataset.id;
+        const playlistName = card.dataset.name;
+        await db.addTrackToPlaylist(playlistId, track);
+        const updated = await db.getPlaylist(playlistId);
+        await syncManager.syncUserPlaylist(updated, 'update');
+        showNotification(`Added to playlist: ${playlistName}`);
+        closeModal();
+    };
 
-            await db.addTrackToPlaylist(playlistId, track);
-            const updatedPlaylist = await db.getPlaylist(playlistId);
-            await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
-            showNotification(`Added to playlist: ${option.querySelector('span').textContent}`);
-            closeModal();
-        }
+    const handleSearch = () => renderGrid(searchInput.value, sortSelect.value);
+    const handleSort = () => renderGrid(searchInput.value, sortSelect.value);
+
+    const handleCreateClick = () => {
+        closeModal();
+        const createModal = document.getElementById('playlist-modal');
+        document.getElementById('playlist-modal-title').textContent = 'Create Playlist';
+        document.getElementById('playlist-name-input').value = '';
+        document.getElementById('playlist-cover-input').value = '';
+        document.getElementById('playlist-cover-file-input').value = '';
+        document.getElementById('playlist-description-input').value = '';
+        createModal.dataset.editingId = '';
+        document.getElementById('import-section').style.display = 'none';
+
+        const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
+        const coverUrlInput = document.getElementById('playlist-cover-input');
+        const coverToggleUrlBtn = document.getElementById('playlist-cover-toggle-url-btn');
+        if (coverUploadBtn) { coverUploadBtn.style.flex = '1'; coverUploadBtn.style.display = 'flex'; }
+        if (coverUrlInput) coverUrlInput.style.display = 'none';
+        if (coverToggleUrlBtn) { coverToggleUrlBtn.textContent = 'or URL'; coverToggleUrlBtn.title = 'Switch to URL input'; }
+
+        createModal._pendingTracks = [track];
+        createModal.classList.add('active');
+        document.getElementById('playlist-name-input').focus();
     };
 
     const cleanup = () => {
-        cancelBtn.removeEventListener('click', closeModal);
+        closeBtn.removeEventListener('click', closeModal);
         overlay.removeEventListener('click', closeModal);
-        list.removeEventListener('click', handleOptionClick);
+        grid.removeEventListener('click', handleGridClick);
+        searchInput.removeEventListener('input', handleSearch);
+        sortSelect.removeEventListener('change', handleSort);
+        createRow.removeEventListener('click', handleCreateClick);
     };
 
-    cancelBtn.addEventListener('click', closeModal);
+    closeBtn.addEventListener('click', closeModal);
     overlay.addEventListener('click', closeModal);
-    list.addEventListener('click', handleOptionClick);
+    grid.addEventListener('click', handleGridClick);
+    searchInput.addEventListener('input', handleSearch);
+    sortSelect.addEventListener('change', handleSort);
+    createRow.addEventListener('click', handleCreateClick);
 
     modal.classList.add('active');
+    searchInput.focus();
 }
 
 export async function handleTrackAction(
@@ -1526,129 +1565,7 @@ export async function handleTrackAction(
             }
         }
     } else if (action === 'add-to-playlist') {
-        const modal = document.getElementById('playlist-select-modal');
-        const list = document.getElementById('playlist-select-list');
-        const cancelBtn = document.getElementById('playlist-select-cancel');
-        const overlay = modal.querySelector('.modal-overlay');
-
-        const renderModal = async () => {
-            const playlists = await db.getPlaylists(true);
-            // Removed empty check to allow creating new playlist
-
-            const trackId = item.id;
-            const trackType = item.type || 'track';
-            const playlistsWithTrack = new Set();
-
-            for (const playlist of playlists) {
-                if (
-                    playlist.tracks &&
-                    playlist.tracks.some((t) => t.id == trackId && (t.type || 'track') === trackType)
-                ) {
-                    playlistsWithTrack.add(playlist.id);
-                }
-            }
-
-            list.innerHTML =
-                `
-                <div class="modal-option create-new-option" style="border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;">
-                    <span style="font-weight: 600; color: var(--primary);">+ Create New Playlist</span>
-                </div>
-            ` +
-                playlists
-                    .map((p) => {
-                        const alreadyContains = playlistsWithTrack.has(p.id);
-                        return `
-                    <div class="modal-option ${alreadyContains ? 'already-contains' : ''}" data-id="${p.id}">
-                        <span>${p.name}</span>
-                        ${
-                            alreadyContains
-                                ? `<button class="remove-from-playlist-btn-modal" title="Remove from playlist" style="background: transparent; border: none; color: inherit; cursor: pointer; padding: 4px; display: flex; align-items: center;">${SVG_BIN(20)}</button>`
-                                : ''
-                        }
-                    </div>
-                `;
-                    })
-                    .join('');
-            return true;
-        };
-
-        if (!(await renderModal())) return;
-
-        const closeModal = () => {
-            modal.classList.remove('active');
-            cleanup();
-        };
-
-        const handleOptionClick = async (e) => {
-            const removeBtn = e.target.closest('.remove-from-playlist-btn-modal');
-            const option = e.target.closest('.modal-option');
-
-            if (!option) return;
-
-            if (option.classList.contains('create-new-option')) {
-                closeModal();
-                const createModal = document.getElementById('playlist-modal');
-                document.getElementById('playlist-modal-title').textContent = 'Create Playlist';
-                document.getElementById('playlist-name-input').value = '';
-                document.getElementById('playlist-cover-input').value = '';
-                document.getElementById('playlist-cover-file-input').value = '';
-                document.getElementById('playlist-description-input').value = '';
-                createModal.dataset.editingId = '';
-                document.getElementById('import-section').style.display = 'none';
-
-                // Reset cover upload state
-                const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
-                const coverUrlInput = document.getElementById('playlist-cover-input');
-                const coverToggleUrlBtn = document.getElementById('playlist-cover-toggle-url-btn');
-                if (coverUploadBtn) {
-                    coverUploadBtn.style.flex = '1';
-                    coverUploadBtn.style.display = 'flex';
-                }
-                if (coverUrlInput) coverUrlInput.style.display = 'none';
-                if (coverToggleUrlBtn) {
-                    coverToggleUrlBtn.textContent = 'or URL';
-                    coverToggleUrlBtn.title = 'Switch to URL input';
-                }
-
-                // Pass track
-                createModal._pendingTracks = [item];
-
-                createModal.classList.add('active');
-                document.getElementById('playlist-name-input').focus();
-                return;
-            }
-
-            const playlistId = option.dataset.id;
-
-            if (removeBtn) {
-                e.stopPropagation();
-                await db.removeTrackFromPlaylist(playlistId, item.id);
-                const updatedPlaylist = await db.getPlaylist(playlistId);
-                await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
-                showNotification(`Removed from playlist: ${option.querySelector('span').textContent}`);
-                await renderModal();
-            } else {
-                if (option.classList.contains('already-contains')) return;
-
-                await db.addTrackToPlaylist(playlistId, item);
-                const updatedPlaylist = await db.getPlaylist(playlistId);
-                await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
-                showNotification(`Added to playlist: ${option.querySelector('span').textContent}`);
-                closeModal();
-            }
-        };
-
-        const cleanup = () => {
-            cancelBtn.removeEventListener('click', closeModal);
-            overlay.removeEventListener('click', closeModal);
-            list.removeEventListener('click', handleOptionClick);
-        };
-
-        cancelBtn.addEventListener('click', closeModal);
-        overlay.addEventListener('click', closeModal);
-        list.addEventListener('click', handleOptionClick);
-
-        modal.classList.add('active');
+        await showAddToPlaylistModal(item);
     } else if (action === 'go-to-artist') {
         const artistId = extraData?.artistId || item.artist?.id || item.artists?.[0]?.id;
         const trackerSheetId = extraData?.trackerSheetId || (item.isTracker ? item.trackerInfo?.sheetId : null);
