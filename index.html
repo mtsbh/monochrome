@@ -2,6 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
+        <meta name="referrer" content="no-referrer" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
         <title>Monochrome Music</title>
         <link rel="canonical" href="https://monochromek.netlify.app/" />
@@ -74,6 +75,8 @@
         <!-- Preconnect to critical third-party origins -->
         <link rel="preconnect" href="https://api.fonts.coollabs.io" crossorigin />
         <link rel="preconnect" href="https://resources.tidal.com" crossorigin />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
         <link rel="apple-touch-icon" href="/assets/logo.svg" />
         <link rel="manifest" href="/manifest.json" />
@@ -95,12 +98,25 @@
                 rel="stylesheet"
             />
         </noscript>
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=Noto+Sans+HK:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Sans+Hebrew:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&family=Noto+Sans+Telugu:wght@400;500;600;700&family=Noto+Sans+Gujarati:wght@400;500;600;700&family=Noto+Sans+Kannada:wght@400;500;600;700&family=Noto+Sans+Malayalam:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Sans+Lao:wght@400;500;600;700&family=Noto+Sans+Myanmar:wght@400;500;600;700&family=Noto+Sans+Georgian:wght@400;500;600;700&family=Noto+Sans+Armenian:wght@400;500;600;700&family=Noto+Sans+Ethiopic:wght@400;500;600;700&display=swap"
+            media="print"
+            onload="this.media = 'all'"
+        />
+        <noscript>
+            <link
+                rel="stylesheet"
+                href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=Noto+Sans+HK:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Sans+Hebrew:wght@400;500;600;700&family=Noto+Sans+Arabic:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&family=Noto+Sans+Telugu:wght@400;500;600;700&family=Noto+Sans+Gujarati:wght@400;500;600;700&family=Noto+Sans+Kannada:wght@400;500;600;700&family=Noto+Sans+Malayalam:wght@400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Sans+Lao:wght@400;500;600;700&family=Noto+Sans+Myanmar:wght@400;500;600;700&family=Noto+Sans+Georgian:wght@400;500;600;700&family=Noto+Sans+Armenian:wght@400;500;600;700&family=Noto+Sans+Ethiopic:wght@400;500;600;700&display=swap"
+            />
+        </noscript>
         <link rel="stylesheet" href="/styles.css" />
     </head>
 
     <body>
         <audio id="audio-player" crossorigin="anonymous" style="display: none"></audio>
         <video id="video-player" crossorigin="anonymous" style="display: none"></video>
+
         <div id="context-menu">
             <ul>
                 <li data-action="shuffle-play-card" data-type-filter="album,playlist,mix,user-playlist">
@@ -1622,6 +1638,32 @@
             </div>
         </div>
 
+        <div id="help-modal" class="modal">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
+                    <h3 style="margin: 0">Monochrome Help</h3>
+                    <button class="close-modal-btn" id="close-help-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground);">&times;</button>
+                </div>
+                <div id="help-video-container" style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; background: #000; border-radius: var(--radius);">
+                     <iframe 
+                        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
+                        src="https://m.samidy.xyz/monochrome-help.mp4" 
+                        title="Monochrome Help" 
+                        frameborder="0" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                        allowfullscreen>
+                    </iframe>
+                </div>
+                <p style="margin-top: 1rem; text-align: center; color: var(--muted-foreground); font-size: 0.9rem;">
+                    thank you to community member valerie for making this video!
+                </p>
+                <div class="modal-actions" style="justify-content: center">
+                    <button id="help-modal-done" class="btn-primary">Done</button>
+                </div>
+            </div>
+        </div>
+
         <div id="sidebar-overlay"></div>
 
         <div id="csv-import-progress" class="csv-import-progress" style="display: none">
@@ -1663,6 +1705,7 @@
                             <use svg="!lucide/chevron-left.svg" size="20" />
                         </button>
                     </div>
+
                     <nav class="sidebar-nav main">
                         <ul>
                             <li class="nav-item" id="sidebar-nav-home">
@@ -1716,7 +1759,21 @@
                                 <!-- Pinned should be injected here -->
                             </ul>
                         </nav>
+
                         <div class="sidebar-nav-bottom">
+                            <div id="server-disruption-banner" class="server-disruption-sidebar" style="display: none">
+                                <span class="disruption-icon">&#9888;</span>
+                                <span
+                                    >Services are currently unstable. <br /><br />Use the extension
+                                    <a href="https://github.com/monochrome-music/monochrome/tree/main/extension"
+                                        >here</a
+                                    >
+                                    for the best experience.</span
+                                >
+                                <button id="dismiss-disruption-btn" class="disruption-dismiss" title="Dismiss">
+                                    &times;
+                                </button>
+                            </div>
                             <nav class="sidebar-nav bottom">
                                 <ul>
                                     <li class="nav-item" id="sidebar-nav-about-bottom">
@@ -1785,6 +1842,9 @@
                         </button>
                         <div id="search-history" class="search-history" style="display: none"></div>
                     </form>
+                    <button id="help-btn" class="btn-icon" title="Help">
+                        <use svg="!lucide/help-circle.svg" size="24" />
+                    </button>
                     <div class="header-account-control">
                         <button
                             id="header-account-btn"
@@ -2642,6 +2702,7 @@
 
                 <div id="page-artist" class="page">
                     <header class="detail-header">
+                        <div id="artist-detail-banner-container" class="detail-header-banner"></div>
                         <img
                             id="artist-detail-image"
                             src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
@@ -3433,6 +3494,16 @@
                                 </div>
                                 <div class="setting-item">
                                     <div class="info">
+                                        <span class="label">Artist Banners</span>
+                                        <span class="description">Display video banners on artist pages</span>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="artist-banners-toggle" checked />
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
                                         <span class="label">Compact Albums</span>
                                         <span class="description"
                                             >Show album cards in a compact, horizontal layout</span
@@ -4064,7 +4135,7 @@
                                     </div>
                                     <select id="streaming-quality-setting">
                                         <option value="auto">Auto (Adaptive)</option>
-                                        <option value="HI_RES_LOSSLESS">Hi-Res Lossless (up to 24-bit/192kHz)</option>
+                                        <option value="HI_RES_LOSSLESS">Hi-Res Lossless (24-bit)</option>
                                         <option value="LOSSLESS">Lossless (16-bit)</option>
                                         <option value="HIGH">AAC 320kbps</option>
                                         <option value="LOW">AAC 96kbps</option>
@@ -5556,6 +5627,42 @@
                             <div class="settings-group">
                                 <div class="setting-item">
                                     <div class="info">
+                                        <span class="label" style="color: #f59e0b">Dev Mode</span>
+                                        <span class="description"
+                                            >Route all API requests through a local Tidal HiFi API server. Requires a
+                                            compatible server running at the specified URL.</span
+                                        >
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="dev-mode-toggle" />
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                                <div class="setting-item" id="dev-mode-url-setting" style="display: none">
+                                    <div class="info">
+                                        <span class="label">Dev Mode API URL</span>
+                                        <span class="description">The URL of your local Tidal HiFi API instance</span>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="dev-mode-url-input"
+                                        placeholder="http://127.0.0.1:8000"
+                                        style="
+                                            width: 220px;
+                                            padding: 0.35rem 0.5rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--card);
+                                            color: var(--foreground);
+                                            font-size: 0.8rem;
+                                        "
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="settings-group">
+                                <div class="setting-item">
+                                    <div class="info">
                                         <span class="label">ADVANCED: Custom Database/Auth</span>
                                         <span class="description"
                                             >Configure custom PocketBase and Appwrite instances</span
@@ -5959,6 +6066,111 @@
                                 Star on GitHub
                             </a>
                         </div>
+                    </div>
+                </div>
+                <div id="page-reset-password" class="page">
+                    <div
+                        class="reset-password-container"
+                        style="text-align: center; padding: var(--space-8); max-width: 400px; margin: 0 auto"
+                    >
+                        <h2 class="section-title" style="margin-bottom: var(--space-10)">Reset your Password</h2>
+
+                        <div
+                            id="reset-password-error"
+                            class="message error-msg"
+                            style="
+                                display: none;
+                                padding: var(--space-3) 0;
+                                border-radius: var(--radius-md);
+                                font-size: var(--text-sm);
+                                margin-bottom: var(--space-4);
+                                background: transparent;
+                                color: #ff6b6b;
+                                text-align: left;
+                            "
+                        ></div>
+                        <div
+                            id="reset-password-success"
+                            class="message success-msg"
+                            style="
+                                display: none;
+                                padding: var(--space-3) 0;
+                                border-radius: var(--radius-md);
+                                font-size: var(--text-sm);
+                                margin-bottom: var(--space-4);
+                                background: transparent;
+                                color: var(--foreground);
+                                text-align: left;
+                            "
+                        ></div>
+
+                        <form id="reset-password-form">
+                            <div style="margin-bottom: var(--space-4)">
+                                <input
+                                    type="password"
+                                    id="reset-password-input"
+                                    placeholder="New Password"
+                                    required
+                                    minlength="8"
+                                    style="
+                                        width: 100%;
+                                        padding: var(--space-3) var(--space-4);
+                                        border: 1px solid var(--border);
+                                        border-radius: var(--radius-md);
+                                        background: var(--card);
+                                        color: var(--foreground);
+                                        font-size: 0.925rem;
+                                        outline: none;
+                                        transition: border-color 0.15s;
+                                    "
+                                />
+                            </div>
+                            <div style="margin-bottom: var(--space-6)">
+                                <input
+                                    type="password"
+                                    id="reset-password-confirm"
+                                    placeholder="Confirm New Password"
+                                    required
+                                    minlength="8"
+                                    style="
+                                        width: 100%;
+                                        padding: var(--space-3) var(--space-4);
+                                        border: 1px solid var(--border);
+                                        border-radius: var(--radius-md);
+                                        background: var(--card);
+                                        color: var(--foreground);
+                                        font-size: 0.925rem;
+                                        outline: none;
+                                        transition: border-color 0.15s;
+                                    "
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                id="reset-password-submit-btn"
+                                class="btn-primary"
+                                style="width: 100%; justify-content: center"
+                            >
+                                <span id="reset-password-btn-text">Reset Password</span>
+                                <div
+                                    id="reset-password-btn-spinner"
+                                    class="animate-spin"
+                                    style="display: none; width: 18px; height: 18px"
+                                >
+                                    <svg
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        style="width: 100%; height: 100%"
+                                    >
+                                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                    </svg>
+                                </div>
+                            </button>
+                        </form>
                     </div>
                 </div>
             </main>

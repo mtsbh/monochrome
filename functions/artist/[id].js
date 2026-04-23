@@ -48,8 +48,7 @@ class TidalAPI {
 class ServerAPI {
     constructor() {
         this.INSTANCES_URLS = [
-            'https://tidal-uptime.jiffy-puffs-1j.workers.dev/',
-            'https://tidal-uptime.props-76styles.workers.dev/',
+            'https://tidal-uptime.geeked.wtf',
         ];
         this.apiInstances = null;
     }
@@ -116,13 +115,8 @@ class ServerAPI {
     }
 
     async getArtistMetadata(id) {
-        try {
-            const response = await this.fetchWithRetry(`/artist/${id}`);
-            return await response.json();
-        } catch {
-            const response = await this.fetchWithRetry(`/artist?id=${id}`);
-            return await response.json();
-        }
+        const response = await this.fetchWithRetry(`/artist/?id=${id}`);
+        return await response.json();
     }
 
     getArtistPictureUrl(id, size = '750') {

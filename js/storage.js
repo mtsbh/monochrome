@@ -5,8 +5,7 @@ import { SVG_RIGHT_ARROW } from './icons';
 export const apiSettings = {
     STORAGE_KEY: 'monochrome-api-instances-v9',
     INSTANCES_URLS: [
-        'https://tidal-uptime.jiffy-puffs-1j.workers.dev/',
-        'https://tidal-uptime.props-76styles.workers.dev/',
+        'https://tidal-uptime.geeked.wtf',
     ],
     defaultInstances: { api: [], streaming: [] },
     userInstances: null,
@@ -684,6 +683,23 @@ export const cardSettings = {
 
     setCompactAlbum(enabled) {
         localStorage.setItem(this.COMPACT_ALBUM_KEY, enabled ? 'true' : 'false');
+    },
+};
+
+export const artistBannerSettings = {
+    STORAGE_KEY: 'artist-banners-enabled',
+
+    isEnabled() {
+        try {
+            const val = localStorage.getItem(this.STORAGE_KEY);
+            return val === null ? true : val === 'true';
+        } catch {
+            return true;
+        }
+    },
+
+    setEnabled(enabled) {
+        localStorage.setItem(this.STORAGE_KEY, enabled ? 'true' : 'false');
     },
 };
 
@@ -2354,6 +2370,37 @@ export const radioSettings = {
     },
 };
 
+export const autoplaySettings = {
+    ENABLED_KEY: 'autoplay-enabled',
+    SMART_RECS_KEY: 'smart-recommendations-enabled',
+
+    isEnabled() {
+        try {
+            const val = localStorage.getItem(this.ENABLED_KEY);
+            return val === null ? true : val === 'true';
+        } catch {
+            return true;
+        }
+    },
+
+    setEnabled(enabled) {
+        localStorage.setItem(this.ENABLED_KEY, enabled ? 'true' : 'false');
+    },
+
+    isSmartRecsEnabled() {
+        try {
+            const val = localStorage.getItem(this.SMART_RECS_KEY);
+            return val === null ? true : val === 'true';
+        } catch {
+            return true;
+        }
+    },
+
+    setSmartRecsEnabled(enabled) {
+        localStorage.setItem(this.SMART_RECS_KEY, enabled ? 'true' : 'false');
+    },
+};
+
 export const analyticsSettings = {
     ENABLED_KEY: 'analytics-enabled',
 
@@ -2615,6 +2662,8 @@ export const fontSettings = {
     FONT_SIZE_KEY: 'monochrome-font-size',
     FONT_LINK_ID: 'monochrome-dynamic-font',
     FONT_FACE_ID: 'monochrome-dynamic-fontface',
+    NOTO_FALLBACK:
+        "'Noto Sans', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans HK', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Hebrew', 'Noto Sans Arabic', 'Noto Sans Devanagari', 'Noto Sans Bengali', 'Noto Sans Thai', 'Noto Sans Tamil', 'Noto Sans Telugu', 'Noto Sans Gujarati', 'Noto Sans Kannada', 'Noto Sans Malayalam', 'Noto Sans Sinhala', 'Noto Sans Khmer', 'Noto Sans Lao', 'Noto Sans Myanmar', 'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic', system-ui, sans-serif",
 
     getDefaultConfig() {
         return {
@@ -2730,7 +2779,7 @@ export const fontSettings = {
             weights: [100, 200, 300, 400, 500, 600, 700, 800, 900],
         });
 
-        document.documentElement.style.setProperty('--font-family', `'${familyName}', sans-serif`);
+        document.documentElement.style.setProperty('--font-family', `'${familyName}', ${this.NOTO_FALLBACK}`);
     },
 
     async loadFontFromUrl(url, familyName) {
@@ -2765,7 +2814,7 @@ export const fontSettings = {
             weights: weights,
         });
 
-        document.documentElement.style.setProperty('--font-family', `'${fontFamily}', sans-serif`);
+        document.documentElement.style.setProperty('--font-family', `'${fontFamily}', ${this.NOTO_FALLBACK}`);
     },
 
     getFontFormat(url) {
@@ -2848,7 +2897,7 @@ export const fontSettings = {
             weights: [100, 200, 300, 400, 500, 600, 700, 800, 900],
         });
 
-        document.documentElement.style.setProperty('--font-family', `'${fontFamily}', sans-serif`);
+        document.documentElement.style.setProperty('--font-family', `'${fontFamily}', ${this.NOTO_FALLBACK}`);
     },
 
     deleteUploadedFont(fontId) {
@@ -2875,7 +2924,7 @@ export const fontSettings = {
             weights: [400, 500, 600, 700, 800],
         });
 
-        const fontValue = family === 'monospace' ? 'monospace' : `'${family}', ${fallback}`;
+        const fontValue = family === 'monospace' ? 'monospace' : `'${family}', ${this.NOTO_FALLBACK}`;
         document.documentElement.style.setProperty('--font-family', fontValue);
     },
 
@@ -2911,7 +2960,7 @@ export const fontSettings = {
             weights: [400, 500, 600, 700],
         });
 
-        document.documentElement.style.setProperty('--font-family', "'SF Pro Display', sans-serif");
+        document.documentElement.style.setProperty('--font-family', `'SF Pro Display', ${this.NOTO_FALLBACK}`);
     },
 
     async applyFont() {
@@ -3081,6 +3130,55 @@ export const modalSettings = {
                 modal.classList.remove('active');
             }
         });
+    },
+};
+
+export const devModeSettings = {
+    STORAGE_KEY: 'dev-mode-enabled',
+    URL_KEY: 'dev-mode-url',
+
+    isEnabled() {
+        try {
+            return localStorage.getItem(this.STORAGE_KEY) === 'true';
+        } catch {
+            return false;
+        }
+    },
+
+    setEnabled(enabled) {
+        localStorage.setItem(this.STORAGE_KEY, enabled ? 'true' : 'false');
+    },
+
+    getUrl() {
+        try {
+            return localStorage.getItem(this.URL_KEY) || 'http://127.0.0.1:8000';
+        } catch {
+            return 'http://127.0.0.1:8000';
+        }
+    },
+
+    setUrl(url) {
+        localStorage.setItem(this.URL_KEY, url);
+    },
+};
+
+export const serverDisruptionSettings = {
+    STORAGE_KEY: 'server-disruption-dismissed',
+
+    isDismissed() {
+        try {
+            return localStorage.getItem(this.STORAGE_KEY) === 'true';
+        } catch {
+            return false;
+        }
+    },
+
+    dismiss() {
+        localStorage.setItem(this.STORAGE_KEY, 'true');
+    },
+
+    reset() {
+        localStorage.removeItem(this.STORAGE_KEY);
     },
 };
 

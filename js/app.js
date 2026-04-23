@@ -412,6 +412,13 @@ async function uploadCoverImage(file) {
 document.addEventListener('DOMContentLoaded', async () => {
     await modernSettings.waitPending();
 
+    // Request persistent storage to reduce risk of browser wiping data on updates or cleanup
+    if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().catch(() => {
+            // Ignore errors; persistence is a best-effort request
+        });
+    }
+
     if (import.meta.env.DEV) {
         window.monochrome = {
             HiFiClient,
@@ -446,6 +453,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     new ThemeStore();
+
+    const helpBtn = document.getElementById('help-btn');
+    const helpModal = document.getElementById('help-modal');
+    const closeHelpModal = document.getElementById('close-help-modal');
+    const helpModalDone = document.getElementById('help-modal-done');
+    const helpModalOverlay = helpModal?.querySelector('.modal-overlay');
+
+    if (helpBtn && helpModal) {
+        helpBtn.addEventListener('click', () => {
+            helpModal.classList.add('active');
+        });
+
+        const hideHelpModal = () => {
+            helpModal.classList.remove('active');
+            const iframe = helpModal.querySelector('iframe');
+            if (iframe) {
+                const src = iframe.src;
+                iframe.src = '';
+                iframe.src = src;
+            }
+        };
+
+        closeHelpModal?.addEventListener('click', hideHelpModal);
+        helpModalDone?.addEventListener('click', hideHelpModal);
+        helpModalOverlay?.addEventListener('click', hideHelpModal);
+    }
     await HiFiClient.initialize({
         storage: [
             localStorage,
@@ -467,30 +500,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const audioPlayer = document.getElementById('audio-player');
 
     // i love ios and macos!!!! webkit fucking SUCKS BULLSHIT sorry ios/macos heads yall getting lossless only playback
-    // Use isIos from platform-detection (set before UA spoof in index.html) so detection works on real iOS.
-    if (isIos || isSafari) {
-        const qualitySelect = document.getElementById('streaming-quality-setting');
-        const downloadQualitySelect = document.getElementById('download-quality-setting');
-
-        const removeHiRes = (select) => {
-            if (!select) return;
-            const option = select.querySelector('option[value="HI_RES_LOSSLESS"]');
-            if (option) option.remove();
-        };
-
-        removeHiRes(qualitySelect);
-        removeHiRes(downloadQualitySelect);
-
-        if (isIos) {
-            document.querySelector('#hi-res-download-warning').style.display = '';
-        }
-
-        const currentQualitySetting = localStorage.getItem('playback-quality');
-        if (!currentQualitySetting || currentQualitySetting === 'HI_RES_LOSSLESS') {
-            localStorage.setItem('playback-quality', 'LOSSLESS');
-        }
-    }
-
     const currentQuality = localStorage.getItem('playback-quality') || 'HI_RES_LOSSLESS';
     await Player.initialize(audioPlayer, MusicAPI.instance, currentQuality);
 
@@ -660,7 +669,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
-    initializePlayerEvents(Player.instance, audioPlayer, scrobbler, UIRenderer.instance);
+    await initializePlayerEvents(Player.instance, audioPlayer, scrobbler, UIRenderer.instance);
     initializeTrackInteractions(
         Player.instance,
         MusicAPI.instance,
@@ -1096,6 +1105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
 
                     Player.instance.setQueue(sortedTracks, 0);
+                    Player.instance.enableAutoplay();
                     const shuffleBtn = document.getElementById('shuffle-btn');
                     if (shuffleBtn) shuffleBtn.classList.remove('active');
                     Player.instance.shuffleActive = false;
@@ -1127,6 +1137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (tracks && tracks.length > 0) {
                     const shuffledTracks = [...tracks].sort(() => Math.random() - 0.5);
                     Player.instance.setQueue(shuffledTracks, 0);
+                    Player.instance.enableAutoplay();
                     const shuffleBtn = document.getElementById('shuffle-btn');
                     if (shuffleBtn) shuffleBtn.classList.remove('active');
                     Player.instance.shuffleActive = false;
@@ -1195,6 +1206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const shuffledTracks = [...allTracks].sort(() => Math.random() - 0.5);
                 Player.instance.setQueue(shuffledTracks, 0);
+                Player.instance.enableAutoplay();
                 const shuffleBtn = document.getElementById('shuffle-btn');
                 if (shuffleBtn) shuffleBtn.classList.remove('active');
                 Player.instance.shuffleActive = false;
@@ -2748,9 +2760,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             headerAccountBtn.title = 'Accounts temporarily unavailable';
             headerAccountBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                alert(
-                    "We're moving authentication and data storing systems.\n\nAccounts, profiles, playlists, and community themes will not work during this period (approximately 2 days).\n\nYou will need to re-login after the migration is complete."
-                );
+                alert('.');
             });
         } else {
             headerAccountBtn.addEventListener('click', async (e) => {

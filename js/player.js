@@ -17,14 +17,17 @@ import {
     exponentialVolumeSettings,
     audioEffectsSettings,
     radioSettings,
+    autoplaySettings,
     binauralDspSettings,
 } from './storage.js';
 import { audioContextManager } from './audio-context.js';
 import { isIos, isSafari } from './platform-detection.js';
 import { db } from './db.js';
+import { getProxyUrl } from './proxy-utils.js';
 
 import { SVG_CLOCK, SVG_ATMOS } from './icons.js';
 import { UIRenderer } from './ui.js';
+import { MediaSession } from '@capgo/capacitor-media-session';
 
 export class Player {
     static #instance = null;
@@ -37,7 +40,7 @@ export class Player {
     }
 
     /** @private */
-    constructor(audioElement, api, quality = 'HI_RES_LOSSLESS') {
+    constructor(audioElement, api, quality = 'LOSSLESS') {
         this.audio = audioElement;
         this.video = document.getElementById('video-player');
         this.api = api;
@@ -132,16 +135,24 @@ export class Player {
                 },
                 abr: {
                     enabled: true,
-                    // Start with a low bandwidth estimate (200kbps) so it plays instantly
-                    // on slow connections and smoothly scales UP to Hi-Fi if the connection allows.
                     defaultBandwidthEstimate: 100000,
-                    switchInterval: 1, // Check more frequently
-                    bandwidthDowngradeTarget: 0.8, // Downgrade more aggressively if bandwidth drops
+                    switchInterval: 1,
+                    bandwidthDowngradeTarget: 0.8,
                     restrictToElementSize: false,
                 },
                 mediaSource: {
                     codecSwitchingStrategy: 'smooth',
                 },
+            });
+            this.shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
+                if (type === shaka.net.NetworkingEngine.RequestType.SEGMENT) {
+                    const uris = request.uris;
+                    for (let i = 0; i < uris.length; i++) {
+                        if (uris[i].includes('tidal.com')) {
+                            uris[i] = getProxyUrl(uris[i]);
+                        }
+                    }
+                }
             });
             this.shakaPlayer.addEventListener('adaptation', this.updateAdaptiveQualityBadge.bind(this));
             this.shakaPlayer.addEventListener('variantchanged', this.updateAdaptiveQualityBadge.bind(this));
@@ -162,10 +173,23 @@ export class Player {
         this.isFetchingRadio = false;
         this.radioFetchPromise = null;
 
+        this.autoplayEnabled = autoplaySettings.isEnabled();
+        this.autoplaySeeds = [];
+        this.isFetchingAutoplay = false;
+        this.autoplayFetchPromise = null;
+        this._recentlyPlayedIds = [];
+        this._maxRecentlyPlayed = 100;
+
         this.playbackSequence = 0;
 
         window.addEventListener('beforeunload', async () => {
             await this.saveQueueState();
+            import('./listening-tracker.js')
+                .then(({ listeningTracker }) => {
+                    listeningTracker.onTrackEnd();
+                    listeningTracker.forceFlush();
+                })
+                .catch(() => {});
         });
 
         // Handle visibility change - AudioContext can be suspended when backgrounded
@@ -189,6 +213,29 @@ export class Player {
         });
 
         this._setupVideoSync();
+        this._setupAnimatedCoverSync();
+    }
+
+    _setupAnimatedCoverSync() {
+        const syncPlayPause = () => {
+            const isPaused = this.activeElement.paused;
+            document.querySelectorAll('.cover, #fullscreen-cover-image').forEach((el) => {
+                if (el.tagName === 'VIDEO' && el !== this.video) {
+                    if (isPaused) {
+                        el.pause();
+                    } else {
+                        el.play().catch(() => {});
+                    }
+                }
+            });
+        };
+
+        this.audio.addEventListener('play', syncPlayPause);
+        this.audio.addEventListener('pause', syncPlayPause);
+        if (this.video) {
+            this.video.addEventListener('play', syncPlayPause);
+            this.video.addEventListener('pause', syncPlayPause);
+        }
     }
 
     _setupVideoSync() {
@@ -257,21 +304,7 @@ export class Player {
 
         const el = this.activeElement;
 
-        // Apply to audio element and/or Web Audio graph
-        const isApple = isIos || isSafari;
-
-        if (audioContextManager.isReady() && !isApple) {
-            // If Web Audio is active, we apply volume there for better compatibility
-            // Especially on Linux where audio.volume might not affect the Web Audio graph
-            el.volume = 1.0;
-            audioContextManager.setVolume(effectiveVolume);
-        } else {
-            // Safari bypasses WebAudio for HLS, so we MUST set el.volume directly to reflect ReplayGain
-            if (audioContextManager.isReady()) {
-                audioContextManager.setVolume(1.0); // Reset graph gain if it somehow routes
-            }
-            el.volume = Math.max(0, Math.min(1, effectiveVolume));
-        }
+        el.volume = Math.max(0, Math.min(1, effectiveVolume));
     }
 
     applyAudioEffects() {
@@ -424,10 +457,8 @@ export class Player {
     }
 
     async setupMediaSession() {
-        if (!('mediaSession' in navigator)) return;
-
         const setHandlers = async () => {
-            navigator.mediaSession.setActionHandler('play', async () => {
+            await MediaSession.setActionHandler({ action: 'play' }, async () => {
                 const el = this.activeElement;
                 // Initialize and resume audio context first (required for iOS lock screen)
                 // Must happen before audio.play() or audio won't route through Web Audio
@@ -446,11 +477,11 @@ export class Player {
                 }
             });
 
-            navigator.mediaSession.setActionHandler('pause', () => {
+            await MediaSession.setActionHandler({ action: 'pause' }, () => {
                 this.activeElement.pause();
             });
 
-            navigator.mediaSession.setActionHandler('previoustrack', async () => {
+            await MediaSession.setActionHandler({ action: 'previoustrack' }, async () => {
                 // Ensure audio context is active for iOS lock screen controls
                 if (!audioContextManager.isReady()) {
                     audioContextManager.init(this.activeElement);
@@ -460,7 +491,7 @@ export class Player {
                 this.playPrev();
             });
 
-            navigator.mediaSession.setActionHandler('nexttrack', async () => {
+            await MediaSession.setActionHandler({ action: 'nexttrack' }, async () => {
                 // Ensure audio context is active for iOS lock screen controls
                 if (!audioContextManager.isReady()) {
                     audioContextManager.init(this.activeElement);
@@ -471,24 +502,24 @@ export class Player {
             });
 
             if (!this.isIOS) {
-                navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+                await MediaSession.setActionHandler({ action: 'seekbackward' }, (details) => {
                     const skipTime = details.seekOffset || 10;
                     this.seekBackward(skipTime);
                 });
-                navigator.mediaSession.setActionHandler('seekforward', (details) => {
+                await MediaSession.setActionHandler({ action: 'seekforward' }, (details) => {
                     const skipTime = details.seekOffset || 10;
                     this.seekForward(skipTime);
                 });
             }
 
-            navigator.mediaSession.setActionHandler('seekto', (details) => {
+            await MediaSession.setActionHandler({ action: 'seekto' }, (details) => {
                 if (details.seekTime !== undefined) {
                     this.activeElement.currentTime = Math.max(0, details.seekTime);
                     this.updateMediaSessionPositionState();
                 }
             });
 
-            navigator.mediaSession.setActionHandler('stop', () => {
+            await MediaSession.setActionHandler({ action: 'stop' }, () => {
                 this.activeElement.pause();
                 this.activeElement.currentTime = 0;
                 this.updateMediaSessionPlaybackState();
@@ -675,17 +706,12 @@ export class Player {
                             );
                         }
                     } else {
-                        // For static files (FLAC, MP3), standard fetch of the first ~5MB completely primes the cache.
+                        // For static files (FLAC, MP3), the audio element completely primes the cache.
                         const preloader = new Audio();
                         preloader.preload = 'auto';
                         preloader.muted = true;
-                        preloader.src = streamUrl;
+                        preloader.src = getProxyUrl(streamUrl);
                         streamInfo.preloader = preloader; // Hold reference
-
-                        fetch(streamUrl, {
-                            headers: { Range: 'bytes=0-5242880' },
-                            signal: this.preloadAbortController.signal,
-                        }).catch(() => {});
                     }
                 }
             } catch (error) {
@@ -827,6 +853,46 @@ export class Player {
         await this.playTrackFromQueue();
     }
 
+    async updateVideoCovers(videoUrl) {
+        if (!videoUrl) return;
+
+        const syncCover = async (el) => {
+            if (!el) return;
+            const isPaused = this.activeElement.paused;
+            let videoEl;
+            if (el.tagName === 'IMG') {
+                videoEl = document.createElement('video');
+                videoEl.autoplay = !isPaused;
+                videoEl.loop = true;
+                videoEl.muted = true;
+                videoEl.playsInline = true;
+                videoEl.className = el.className;
+                videoEl.id = el.id;
+                videoEl.style.objectFit = 'cover';
+                el.replaceWith(videoEl);
+            } else if (el.tagName === 'VIDEO') {
+                videoEl = el;
+            } else {
+                return;
+            }
+
+            if (UIRenderer.instance) {
+                await UIRenderer.instance.setupHlsVideo(videoEl, videoUrl, null);
+                if (isPaused) {
+                    videoEl.pause();
+                } else {
+                    videoEl.play().catch(() => {});
+                }
+            }
+        };
+
+        const playerBarCover = document.querySelector('.now-playing-bar .cover');
+        if (playerBarCover) await syncCover(playerBarCover);
+
+        const fullscreenCover = document.getElementById('fullscreen-cover-image');
+        if (fullscreenCover) await syncCover(fullscreenCover);
+    }
+
     async playTrackFromQueue(startTime = 0, recursiveCount = 0, isRetry = false) {
         if (!isRetry) {
             this.isFallbackRetry = false;
@@ -883,10 +949,27 @@ export class Player {
         await this.saveQueueState();
 
         this.currentTrack = track;
-
+        this.addToRecentlyPlayed(track.id);
         const trackTitle = getTrackTitle(track);
+        const artistName = getTrackArtists(track);
         const trackArtistsHTML = getTrackArtistsHTML(track);
         const yearDisplay = getTrackYearDisplay(track);
+
+        if (!track.videoUrl && !track.videoCoverUrl && !track.album?.videoCoverUrl) {
+            this.api.getVideoArtwork(trackTitle, artistName).then((result) => {
+                if (this.currentTrack?.id === track.id && result && (result.videoUrl || result.hlsUrl)) {
+                    track.videoCoverUrl = result.videoUrl || result.hlsUrl;
+                    this.updateVideoCovers(track.videoCoverUrl);
+
+                    if (
+                        UIRenderer.instance &&
+                        document.getElementById('fullscreen-cover-overlay')?.style.display === 'flex'
+                    ) {
+                        UIRenderer.instance.updateFullscreenMetadata(track, this.getNextTrack());
+                    }
+                }
+            });
+        }
 
         const trackInfo = document.querySelector('.now-playing-bar .track-info');
         const coverEl = trackInfo?.querySelector('.cover:not(#audio-player):not(#video-player)');
@@ -952,17 +1035,31 @@ export class Player {
         } else {
             if (coverEl) {
                 coverEl.style.display = 'block';
+                const videoCoverUrl = track.videoUrl || track.videoCoverUrl || track.album?.videoCoverUrl || null;
                 const coverId = track.image || track.cover || track.album?.cover;
-                const coverUrl = this.api.getCoverUrl(coverId);
-                const coverSrcset = this.api.getCoverSrcset(coverId);
-                if (coverEl.getAttribute('src') !== coverUrl) {
-                    coverEl.src = coverUrl;
-                    if (coverSrcset) {
-                        coverEl.setAttribute('srcset', coverSrcset);
-                        coverEl.setAttribute('sizes', '(max-width: 640px) 160px, (max-width: 1024px) 320px, 640px');
-                    } else {
-                        coverEl.removeAttribute('srcset');
-                        coverEl.removeAttribute('sizes');
+                const coverUrl = videoCoverUrl || this.api.getCoverUrl(coverId);
+                const coverSrcset = videoCoverUrl ? null : this.api.getCoverSrcset(coverId);
+
+                if (videoCoverUrl) {
+                    this.updateVideoCovers(videoCoverUrl);
+                } else {
+                    let imgEl = coverEl;
+                    if (coverEl.tagName === 'VIDEO') {
+                        imgEl = document.createElement('img');
+                        imgEl.className = coverEl.className;
+                        imgEl.id = coverEl.id;
+                        coverEl.replaceWith(imgEl);
+                    }
+
+                    if (imgEl.getAttribute('src') !== coverUrl) {
+                        imgEl.src = coverUrl;
+                        if (coverSrcset) {
+                            imgEl.setAttribute('srcset', coverSrcset);
+                            imgEl.setAttribute('sizes', '(max-width: 640px) 160px, (max-width: 1024px) 320px, 640px');
+                        } else {
+                            imgEl.removeAttribute('srcset');
+                            imgEl.removeAttribute('sizes');
+                        }
                     }
                 }
             }
@@ -1129,10 +1226,10 @@ export class Player {
                             : streamUrl;
 
                     try {
-                        await this.shakaPlayer.load(loadTarget);
+                        await this.shakaPlayer.load(getProxyUrl(loadTarget));
                     } catch (e) {
                         console.error('PreloadManager load Error:', e);
-                        if (loadTarget !== streamUrl) await this.shakaPlayer.load(streamUrl);
+                        if (loadTarget !== streamUrl) await this.shakaPlayer.load(getProxyUrl(streamUrl));
                         else throw e;
                     }
 
@@ -1203,13 +1300,13 @@ export class Player {
 
                     try {
                         if (startTime > 0) {
-                            await this.shakaPlayer.load(loadTarget, startTime);
+                            await this.shakaPlayer.load(getProxyUrl(loadTarget), startTime);
                         } else {
-                            await this.shakaPlayer.load(loadTarget);
+                            await this.shakaPlayer.load(getProxyUrl(loadTarget));
                         }
                     } catch (e) {
                         console.error('PreloadManager load Error:', e);
-                        if (loadTarget !== streamUrl) await this.shakaPlayer.load(streamUrl);
+                        if (loadTarget !== streamUrl) await this.shakaPlayer.load(getProxyUrl(streamUrl));
                         else throw e;
                     }
 
@@ -1225,7 +1322,14 @@ export class Player {
                     // which delays the event loop and natively adds gap/latency
                     await this.safePlay(activeElement);
                 } else {
-                    activeElement.src = streamUrl;
+                    if (this.shakaInitialized) {
+                        try {
+                            this.shakaPlayer.unload();
+                            this.shakaPlayer.detach();
+                        } catch {}
+                        this.shakaInitialized = false;
+                    }
+                    activeElement.src = getProxyUrl(streamUrl);
                     this.applyAudioEffects();
                     this.updateAdaptiveQualityBadge();
 
@@ -1290,6 +1394,15 @@ export class Player {
                 });
                 return;
             }
+            if (this.autoplayEnabled && isLastTrack) {
+                this.fetchAutoplayRecommendations().then(async () => {
+                    const updatedQueue = this.getCurrentQueue();
+                    if (this.currentQueueIndex < updatedQueue.length - 1) {
+                        await this.playNext(0);
+                    }
+                });
+                return;
+            }
             if (this.artistPopularTracksState.artistId && this.artistPopularTracksState.hasMore) {
                 await this.fetchMoreArtistPopularTracks().then(async (newTracks) => {
                     if (newTracks && newTracks.length > 0) {
@@ -1330,12 +1443,19 @@ export class Player {
                         }
                     });
                     return;
+                } else if (this.autoplayEnabled) {
+                    this.fetchAutoplayRecommendations().then(async () => {
+                        const updatedQueue = this.getCurrentQueue();
+                        if (this.currentQueueIndex < updatedQueue.length - 1) {
+                            await this.playNext(0);
+                        }
+                    });
+                    return;
                 } else if (this.artistPopularTracksState.artistId && this.artistPopularTracksState.hasMore) {
                     await this.fetchMoreArtistPopularTracks().then(async (newTracks) => {
                         if (newTracks && newTracks.length > 0) {
                             await this.addToQueue(newTracks);
                         }
-                        // Now play the next track (which is now at currentQueueIndex + 1 if tracks were added)
                         this.currentQueueIndex++;
                         await this.playTrackFromQueue(0, recursiveCount);
                     });
@@ -1421,11 +1541,19 @@ export class Player {
                     ...favorites.map((t) => t.id),
                     ...userPlaylists.flatMap((p) => (p.tracks || []).map((t) => t.id)),
                     ...history.map((t) => t.id),
+                    ...this._recentlyPlayedIds,
                 ]);
 
-                const recommendations = await this.api.getRecommendedTracksForPlaylist(seeds, 20, {
+                let recommendations = await this.api.getRecommendedTracksForPlaylist(seeds, 20, {
                     knownTrackIds: knownTrackIds,
                 });
+
+                const { autoplaySettings: _autoplaySettings } = await import('./storage.js');
+                if (_autoplaySettings.isSmartRecsEnabled()) {
+                    const { smartRecommendations } = await import('./smart-recommendations.js');
+                    recommendations = smartRecommendations.filterRecommendations(recommendations);
+                    recommendations = smartRecommendations.rankRecommendations(recommendations);
+                }
 
                 if (recommendations && recommendations.length > 0) {
                     const currentQueueIds = new Set(this.getCurrentQueue().map((t) => t.id));
@@ -1452,6 +1580,14 @@ export class Player {
     }
 
     async pickRadioSeeds() {
+        try {
+            const { smartRecommendations } = await import('./smart-recommendations.js');
+            const smartSeeds = await smartRecommendations.getSmartSeeds(50);
+            if (smartSeeds.length > 0) return smartSeeds;
+        } catch (e) {
+            console.warn('Smart seeds failed, falling back to basic seed selection:', e);
+        }
+
         try {
             const [history, favorites, userPlaylists] = await Promise.all([
                 db.getHistory(),
@@ -1507,6 +1643,97 @@ export class Player {
         }
     }
 
+    enableAutoplay() {
+        this.autoplayEnabled = true;
+        autoplaySettings.setEnabled(true);
+    }
+
+    disableAutoplay() {
+        this.autoplayEnabled = false;
+        autoplaySettings.setEnabled(false);
+    }
+
+    addToRecentlyPlayed(trackId) {
+        if (!trackId) return;
+        this._recentlyPlayedIds = this._recentlyPlayedIds.filter((id) => id !== trackId);
+        this._recentlyPlayedIds.push(trackId);
+        if (this._recentlyPlayedIds.length > this._maxRecentlyPlayed) {
+            this._recentlyPlayedIds = this._recentlyPlayedIds.slice(-this._maxRecentlyPlayed);
+        }
+    }
+
+    fetchAutoplayRecommendations() {
+        if (this.isFetchingAutoplay) return this.autoplayFetchPromise || Promise.resolve();
+        this.isFetchingAutoplay = true;
+
+        this.showRadioLoading(true);
+
+        this.autoplayFetchPromise = (async () => {
+            try {
+                const { smartRecommendations } = await import('./smart-recommendations.js');
+                const { autoplaySettings: _autoplaySettings } = await import('./storage.js');
+
+                const currentQueue = this.getCurrentQueue();
+                const recentQueueTracks = currentQueue.slice(
+                    Math.max(0, this.currentQueueIndex - 10),
+                    this.currentQueueIndex + 1
+                );
+
+                const seeds = await smartRecommendations.getAdaptiveQueueSeeds(
+                    recentQueueTracks,
+                    this._recentlyPlayedIds,
+                    5
+                );
+
+                if (seeds.length === 0) {
+                    if (this.currentTrack) seeds.push(this.currentTrack);
+                    else return;
+                }
+
+                const [favorites, userPlaylists, history] = await Promise.all([
+                    db.getFavorites('track'),
+                    db.getAll('user_playlists'),
+                    db.getHistory(),
+                ]);
+
+                const knownTrackIds = new Set([
+                    ...favorites.map((t) => t.id),
+                    ...userPlaylists.flatMap((p) => (p.tracks || []).map((t) => t.id)),
+                    ...history.map((t) => t.id),
+                    ...this._recentlyPlayedIds,
+                    ...currentQueue.map((t) => t.id),
+                ]);
+
+                let recommendations = await this.api.getRecommendedTracksForPlaylist(seeds, 20, {
+                    knownTrackIds: knownTrackIds,
+                });
+
+                if (_autoplaySettings.isSmartRecsEnabled()) {
+                    recommendations = smartRecommendations.filterRecommendations(recommendations);
+                    recommendations = smartRecommendations.rankRecommendations(recommendations);
+                }
+
+                if (recommendations && recommendations.length > 0) {
+                    const currentQueueIds = new Set(currentQueue.map((t) => t.id));
+                    let newTracks = recommendations.filter((t) => !currentQueueIds.has(t.id));
+
+                    if (newTracks.length > 0) {
+                        const tracksToAdd = newTracks.slice(0, 5);
+                        await this.addToQueue(tracksToAdd);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch autoplay recommendations:', error);
+            } finally {
+                this.isFetchingAutoplay = false;
+                this.autoplayFetchPromise = null;
+                setTimeout(() => this.showRadioLoading(false), 500);
+            }
+        })();
+
+        return this.autoplayFetchPromise;
+    }
+
     playPrev(recursiveCount = 0) {
         const el = this.activeElement;
         if (el.currentTime > 3) {
@@ -1514,7 +1741,6 @@ export class Player {
             this.updateMediaSessionPositionState();
         } else if (this.currentQueueIndex > 0) {
             this.currentQueueIndex--;
-            // Skip unavailable and blocked tracks
             const currentQueue = this.shuffleActive ? this.shuffledQueue : this.queue;
 
             if (recursiveCount > currentQueue.length) {
@@ -1529,6 +1755,12 @@ export class Player {
                     if (track?.isUnavailable || contentBlockingSettings.shouldHideTrack(track)) {
                         return this.playPrev(recursiveCount + 1);
                     }
+                    import('./listening-tracker.js')
+                        .then(({ listeningTracker }) => {
+                            listeningTracker.onSkip();
+                            listeningTracker.forceFlush();
+                        })
+                        .catch(() => {});
                     await this.playTrackFromQueue(0, recursiveCount);
                 })
                 .catch(console.error);
@@ -2145,33 +2377,33 @@ export class Player {
     }
 
     updateMediaSession(track) {
-        if (!('mediaSession' in navigator)) return;
-
-        // Force a refresh for picky Bluetooth systems by clearing metadata first
-        navigator.mediaSession.metadata = null;
-
         const coverId = track.album?.cover;
         const trackTitle = getTrackTitle(track);
 
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: trackTitle || 'Unknown Title',
-            artist: getTrackArtists(track) || 'Unknown Artist',
-            album: track.album?.title || 'Unknown Album',
-            artwork: coverId
-                ? [
-                      {
-                          src: this.api.getCoverUrl(coverId, '1280'),
-                          sizes: '1280x1280',
-                          type: 'image/jpeg',
-                      },
-                  ]
-                : undefined,
-        });
+        // Force a refresh for picky Bluetooth systems by clearing metadata first
+        MediaSession.setMetadata({})
+            .finally(() =>
+                MediaSession.setMetadata({
+                    title: trackTitle || 'Unknown Title',
+                    artist: getTrackArtists(track) || 'Unknown Artist',
+                    album: track.album?.title || 'Unknown Album',
+                    artwork: coverId
+                        ? [
+                              {
+                                  src: this.api.getCoverUrl(coverId, '1280'),
+                                  sizes: '1280x1280',
+                                  type: 'image/jpeg',
+                              },
+                          ]
+                        : undefined,
+                })
+            )
+            .catch(() => {})
+            .finally(() => {
+                this.updateMediaSessionPlaybackState();
+                this.updateMediaSessionPositionState();
+            });
 
-        this.updateMediaSessionPlaybackState();
-        this.updateMediaSessionPositionState();
-
-        // Push metadata to Android Auto via native bridge
         if (window.AndroidBridge) {
             const artworkUrl = coverId ? this.api.getCoverUrl(coverId, '1280') : '';
             window.AndroidBridge.onMetadataChanged(JSON.stringify({
@@ -2184,9 +2416,8 @@ export class Player {
     }
 
     updateMediaSessionPlaybackState() {
-        if (!('mediaSession' in navigator)) return;
         const isPlaying = !this.activeElement.paused;
-        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+        void MediaSession.setPlaybackState({ playbackState: isPlaying ? 'playing' : 'paused' });
 
         // Start/stop Android foreground service to prevent background audio throttling
         this._updateBackgroundAudioService(isPlaying);
@@ -2223,9 +2454,6 @@ export class Player {
     }
 
     updateMediaSessionPositionState() {
-        if (!('mediaSession' in navigator)) return;
-        if (!('setPositionState' in navigator.mediaSession)) return;
-
         const el = this.activeElement;
         const duration = el.duration;
 
@@ -2233,15 +2461,13 @@ export class Player {
             return;
         }
 
-        try {
-            navigator.mediaSession.setPositionState({
-                duration: duration,
-                playbackRate: el.playbackRate || 1,
-                position: Math.min(el.currentTime, duration),
-            });
-        } catch (error) {
+        MediaSession.setPositionState({
+            duration: duration,
+            playbackRate: el.playbackRate || 1,
+            position: Math.min(el.currentTime, duration),
+        }).catch((error) => {
             console.log('Failed to update Media Session position:', error);
-        }
+        });
     }
 
     async safePlay(element = this.activeElement) {
