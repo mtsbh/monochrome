@@ -18,7 +18,9 @@
       "Bash(find d:/projects/monochrome -name *.js -path */appwrite/*)",
       "Bash(find d:/projects/monochrome/dist -name *.js)",
       "mcp__Windows-MCP__Scrape",
-      "Bash(python3)"
+      "Bash(python3)",
+      "Bash(git fetch *)",
+      "Bash(git cherry-pick *)"
     ]
   }
 }
