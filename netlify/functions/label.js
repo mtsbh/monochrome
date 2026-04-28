@@ -2,10 +2,38 @@
 
 const QOBUZ_BASE = 'https://www.qobuz.com/api.json/0.2';
 
-function getQobuzToken() {
-    const token = process.env.QOBUZ_USER_AUTH_TOKEN;
-    if (!token) throw new Error('QOBUZ_USER_AUTH_TOKEN not set');
-    return token;
+// In-memory token cache (survives warm Lambda invocations, resets on cold start)
+let _cachedToken = null;
+
+async function getQobuzToken() {
+    // 1. Prefer static token if set
+    if (process.env.QOBUZ_USER_AUTH_TOKEN) return process.env.QOBUZ_USER_AUTH_TOKEN;
+
+    // 2. Return cached token from a previous auto-login in this Lambda instance
+    if (_cachedToken) return _cachedToken;
+
+    // 3. Auto-login using email + password from env
+    const email = process.env.QOBUZ_USER_EMAIL;
+    const password = process.env.QOBUZ_USER_PASSWORD;
+    const appId = process.env.QOBUZ_APP_ID;
+    if (!email || !password || !appId) {
+        throw new Error('Qobuz credentials not configured. Set QOBUZ_USER_AUTH_TOKEN or QOBUZ_USER_EMAIL + QOBUZ_USER_PASSWORD + QOBUZ_APP_ID.');
+    }
+
+    const params = new URLSearchParams({ username: email, password, app_id: appId });
+    const res = await fetch(`${QOBUZ_BASE}/user/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Qobuz login failed (${res.status}): ${text}`);
+    }
+    const data = await res.json();
+    _cachedToken = data.user_auth_token;
+    if (!_cachedToken) throw new Error('Qobuz login succeeded but no user_auth_token in response');
+    return _cachedToken;
 }
 
 function similarity(a, b) {
@@ -225,9 +253,9 @@ exports.handler = async (event) => {
 
     let token;
     try {
-        token = getQobuzToken();
-    } catch {
-        return { statusCode: 503, headers: corsHeaders, body: JSON.stringify({ error: 'Qobuz token not configured' }) };
+        token = await getQobuzToken();
+    } catch (err) {
+        return { statusCode: 503, headers: corsHeaders, body: JSON.stringify({ error: err.message || 'Qobuz token not configured' }) };
     }
 
     let label;
