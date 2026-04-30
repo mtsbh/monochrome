@@ -202,9 +202,10 @@ async function showMultiSelectPlaylistModal(tracks) {
             : sorted;
 
         grid.innerHTML = filtered.map(p => {
-            const coverSrc = p.cover || (p.images && p.images[0]);
+            const rawCover = p.cover || (p.images && p.images[0]);
+            const coverSrc = rawCover ? MusicAPI.instance.getCoverUrl(rawCover, '160') : null;
             const coverHtml = coverSrc
-                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy">`
+                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : `<div class="playlist-select-card-placeholder">${SVG_MUSIC(24)}</div>`;
             return `
                 <div class="playlist-select-card" data-id="${p.id}" data-name="${escapeHtml(p.name)}">
@@ -1085,9 +1086,10 @@ export async function showAddToPlaylistModal(track) {
 
         grid.innerHTML = filtered.map(p => {
             const alreadyIn = playlistsWithTrack.has(p.id);
-            const coverSrc = p.cover || (p.images && p.images[0]);
+            const rawCover = p.cover || (p.images && p.images[0]);
+            const coverSrc = rawCover ? MusicAPI.instance.getCoverUrl(rawCover, '160') : null;
             const coverHtml = coverSrc
-                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy">`
+                ? `<img class="playlist-select-card-cover" src="${coverSrc}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
                 : `<div class="playlist-select-card-placeholder">${SVG_MUSIC(24)}</div>`;
             return `
                 <div class="playlist-select-card${alreadyIn ? ' already-in' : ''}" data-id="${p.id}" data-name="${escapeHtml(p.name)}">
