@@ -197,6 +197,42 @@ async function searchTidalAlbums(query) {
     return [];
 }
 
+// Convert a Qobuz album object to the normalized album shape used by the UI.
+// If a TIDAL match is provided it takes precedence for id/cover (so the album
+// page and TIDAL playback work), but we always keep Qobuz cover as fallback.
+function qobuzAlbumToCard(qAlbum, tidalMatch = null) {
+    const artistName = qAlbum.artist?.name || '';
+    const qCover = qAlbum.image?.large || qAlbum.image?.small || qAlbum.image?.thumbnail || null;
+
+    if (tidalMatch) {
+        const cover = tidalMatch.cover ?? tidalMatch.album?.cover ?? tidalMatch.image ?? qCover;
+        return {
+            id: String(tidalMatch.id),
+            title: tidalMatch.title,
+            artist: {
+                id: String(tidalMatch.artist?.id ?? tidalMatch.artists?.[0]?.id ?? ''),
+                name: tidalMatch.artist?.name ?? tidalMatch.artists?.[0]?.name ?? artistName,
+            },
+            cover,
+            releaseDate: tidalMatch.releaseDate ?? tidalMatch.streamStartDate ?? qAlbum.release_date_original ?? null,
+            type: tidalMatch.type ?? null,
+        };
+    }
+
+    // Qobuz-only: use Qobuz data. Cover is a full URL so getCoverUrl passes it through.
+    // id is prefixed with "qobuz-" so the router can detect it and open the Qobuz page.
+    return {
+        id: `qobuz-${qAlbum.id}`,
+        title: qAlbum.title,
+        artist: { id: String(qAlbum.artist?.id ?? ''), name: artistName },
+        cover: qCover,
+        releaseDate: qAlbum.release_date_original ?? null,
+        type: qAlbum.release_type ?? null,
+        _qobuzOnly: true,
+        _qobuzUrl: `https://play.qobuz.com/album/${qAlbum.id}`,
+    };
+}
+
 async function matchOnTidal(qAlbum) {
     const artistName = qAlbum.artist?.name || '';
     const query = `${artistName} ${qAlbum.title}`.trim();
@@ -208,19 +244,7 @@ async function matchOnTidal(qAlbum) {
         const score = similarity(qAlbum.title, ta.title || '') * 0.6 + similarity(artistName, tArtist) * 0.4;
         if (score > bestScore) { bestScore = score; best = ta; }
     }
-    if (bestScore < 0.6) return null;
-    const cover = best.cover ?? best.album?.cover ?? best.image ?? null;
-    return {
-        id: String(best.id),
-        title: best.title,
-        artist: {
-            id: String(best.artist?.id ?? best.artists?.[0]?.id ?? ''),
-            name: best.artist?.name ?? best.artists?.[0]?.name ?? artistName,
-        },
-        cover,
-        releaseDate: best.releaseDate ?? best.streamStartDate ?? null,
-        type: best.type ?? null,
-    };
+    return bestScore >= 0.6 ? best : null;
 }
 
 const corsHeaders = {
@@ -289,27 +313,30 @@ exports.handler = async (event) => {
         return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Label not found on Qobuz', label: null, albums: [], total: 0 }) };
     }
 
-    // Scan Qobuz pages until we collect `limit` matched TIDAL albums.
-    // This avoids returning sparse pages when most Qobuz albums don't match.
-    const matched = [];
+    // Fetch Qobuz albums for this page, then attempt TIDAL matching in parallel.
+    // Albums not found on TIDAL are still included using Qobuz data so the full
+    // catalogue is visible (Qobuz fallback streaming handles playback via ISRC).
+    const SCAN_BATCH = 50;
+    const MAX_SCANNED = 300;
+    const results = [];
     let qobuzOffset = offset;
     let qobuzTotal = null;
-    const SCAN_BATCH = 50; // fetch 50 from Qobuz at a time
-    const MAX_SCANNED = 300; // never scan more than 300 Qobuz albums per request
 
     try {
-        while (matched.length < limit && qobuzOffset - offset < MAX_SCANNED) {
+        while (results.length < limit && qobuzOffset - offset < MAX_SCANNED) {
             const batch = await getQobuzLabelAlbums(label.id, label.name, qobuzOffset, SCAN_BATCH, token);
             if (qobuzTotal === null) qobuzTotal = batch.total;
             if (!batch.albums.length) break;
 
-            const batchMatched = (await Promise.all(
+            const tidalMatches = await Promise.all(
                 batch.albums.map(qa => matchOnTidal(qa).catch(() => null))
-            )).filter(Boolean);
+            );
 
-            matched.push(...batchMatched);
-            qobuzOffset += SCAN_BATCH;
+            for (let i = 0; i < batch.albums.length; i++) {
+                results.push(qobuzAlbumToCard(batch.albums[i], tidalMatches[i]));
+            }
 
+            qobuzOffset += batch.albums.length;
             if (qobuzOffset >= batch.total) break;
         }
     } catch {
@@ -317,15 +344,16 @@ exports.handler = async (event) => {
     }
 
     const hasMore = qobuzTotal !== null && qobuzOffset < qobuzTotal;
+    const page = results.slice(0, limit);
 
     return {
         statusCode: 200,
-        headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=86400' },
+        headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=3600' },
         body: JSON.stringify({
             label: { id: label.id, name: label.name },
-            albums: matched.slice(0, limit),
+            albums: page,
             total: qobuzTotal ?? 0,
-            matched: matched.slice(0, limit).length,
+            matched: page.filter(a => !a._qobuzOnly).length,
             nextOffset: qobuzOffset,
             offset, limit, hasMore,
         }),

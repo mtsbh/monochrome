@@ -5043,13 +5043,21 @@ export class UIRenderer {
             }
 
             if (!data.albums.length) {
-                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">No albums from this label found on TIDAL.</p>`;
-                metaEl.textContent = 'No matches found';
+                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">No albums from this label found.</p>`;
+                metaEl.textContent = 'No albums found';
                 return;
             }
 
+            const formatMeta = (d) => {
+                const total = d.total || 0;
+                const onTidal = d.matched || 0;
+                const qOnly = (d.albums?.filter(a => a._qobuzOnly)?.length) || 0;
+                if (qOnly > 0) return `${total} albums on Qobuz (${onTidal} also on TIDAL)`;
+                return `${onTidal} albums found`;
+            };
+
             renderAlbums(data.albums);
-            metaEl.textContent = `${totalMatched} albums from this label on TIDAL`;
+            metaEl.textContent = formatMeta(data);
 
             if (data.hasMore) {
                 loadMoreBtn.style.display = '';
@@ -5061,7 +5069,7 @@ export class UIRenderer {
                         totalMatched += more.matched;
                         nextOffset = more.nextOffset ?? (nextOffset + limit);
                         renderAlbums(more.albums, true);
-                        metaEl.textContent = `${totalMatched} albums from this label on TIDAL`;
+                        metaEl.textContent = formatMeta(more);
                         if (!more.hasMore || !more.albums.length) {
                             loadMoreBtn.style.display = 'none';
                         } else {

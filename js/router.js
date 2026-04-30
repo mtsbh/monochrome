@@ -51,7 +51,13 @@ export function createRouter(ui) {
                 break;
             case 'album': {
                 const { provider, id } = extractProviderAndId(param);
-                await ui.renderAlbumPage(id, provider);
+                if (id.startsWith('qobuz-')) {
+                    const qobuzId = id.slice(6);
+                    window.open(`https://play.qobuz.com/album/${qobuzId}`, '_blank');
+                    history.back();
+                } else {
+                    await ui.renderAlbumPage(id, provider);
+                }
                 break;
             }
             case 'artist': {
