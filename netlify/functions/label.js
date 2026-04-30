@@ -146,18 +146,17 @@ async function findQobuzLabel(name, token) {
 }
 
 async function getQobuzLabelAlbums(labelId, labelName, offset, limit, token) {
-    // catalog/search with label_id properly paginates all label albums.
-    // label/get caps albums_limit at a very low number regardless of the param.
-    const url = new URL(`${QOBUZ_BASE}/catalog/search`);
-    url.searchParams.set('type', 'albums');
-    url.searchParams.set('query', labelName);
+    // Try label/get first — it's the authoritative endpoint for label albums.
+    const url = new URL(`${QOBUZ_BASE}/label/get`);
     url.searchParams.set('label_id', String(labelId));
-    url.searchParams.set('limit', String(limit));
-    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('extra', 'albums');
+    url.searchParams.set('albums_limit', String(limit));
+    url.searchParams.set('albums_offset', String(offset));
     url.searchParams.set('app_id', process.env.QOBUZ_APP_ID);
     const res = await fetch(url, { headers: { 'X-User-Auth-Token': token } });
-    if (!res.ok) throw new Error(`Qobuz catalog/search failed: ${res.status}`);
+    if (!res.ok) throw new Error(`Qobuz label/get failed: ${res.status}`);
     const data = await res.json();
+    console.log(`[label] label/get labelId=${labelId} offset=${offset} limit=${limit} → items=${data.albums?.items?.length} total=${data.albums?.total} keys=${Object.keys(data.albums || {}).join(',')}`);
     return { albums: data.albums?.items || [], total: data.albums?.total || 0 };
 }
 
