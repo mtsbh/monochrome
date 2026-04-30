@@ -4877,17 +4877,28 @@ export class UIRenderer {
         if (authManager.user) syncManager.setSavedLabels(labels).catch(() => {});
     }
 
-    saveLabel(name) {
+    saveLabel(name, id = null) {
         const saved = this.getSavedLabels();
-        if (!saved.includes(name)) { saved.push(name); this._persistSavedLabels(saved); }
+        const idx = saved.findIndex(e => typeof e === 'object' ? e.name === name : e === name);
+        if (idx === -1) {
+            saved.push(id ? { name, id } : name);
+        } else if (id && typeof saved[idx] !== 'object') {
+            // Upgrade string entry to include id
+            saved[idx] = { name, id };
+        } else {
+            return; // already saved, no change needed
+        }
+        this._persistSavedLabels(saved);
     }
 
     unsaveLabel(name) {
-        this._persistSavedLabels(this.getSavedLabels().filter(n => n !== name));
+        this._persistSavedLabels(this.getSavedLabels().filter(e =>
+            typeof e === 'object' ? e.name !== name : e !== name
+        ));
     }
 
     isLabelSaved(name) {
-        return this.getSavedLabels().includes(name);
+        return this.getSavedLabels().some(e => typeof e === 'object' ? e.name === name : e === name);
     }
 
     async loadSavedLabelsFromCloud() {
@@ -4924,18 +4935,21 @@ export class UIRenderer {
         const chipsEl = document.getElementById('saved-labels-chips');
         const saved = this.getSavedLabels();
         if (saved.length) {
-            chipsEl.innerHTML = saved.map(name =>
-                `<span class="label-chip" data-label="${name}" style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.3rem 0.75rem;border-radius:999px;background:var(--card-bg,rgba(255,255,255,0.08));cursor:pointer;font-size:0.875rem;">
-                    ${name}
-                    <span class="label-chip-remove" data-label="${name}" title="Remove" style="opacity:0.5;font-size:0.75rem;line-height:1;padding:0 0.1rem;">✕</span>
-                </span>`
-            ).join('');
+            chipsEl.innerHTML = saved.map(entry => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                return `<span class="label-chip" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''} style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.3rem 0.75rem;border-radius:999px;background:var(--card-bg,rgba(255,255,255,0.08));cursor:pointer;font-size:0.875rem;">
+                    ${escapeHtml(name)}
+                    <span class="label-chip-remove" data-label="${escapeHtml(name)}" title="Remove" style="opacity:0.5;font-size:0.75rem;line-height:1;padding:0 0.1rem;">✕</span>
+                </span>`;
+            }).join('');
             listEl.style.display = '';
 
             chipsEl.querySelectorAll('.label-chip').forEach(chip => {
                 chip.addEventListener('click', (e) => {
                     if (e.target.closest('.label-chip-remove')) return;
-                    navigate(`/label/${encodeURIComponent(chip.dataset.label)}`);
+                    if (chip.dataset.labelId) navigate(`/label-id/${chip.dataset.labelId}`);
+                    else navigate(`/label/${encodeURIComponent(chip.dataset.label)}`);
                 });
             });
             chipsEl.querySelectorAll('.label-chip-remove').forEach(btn => {
@@ -5020,9 +5034,10 @@ export class UIRenderer {
                     saveBtn.style.opacity = saved ? '1' : '0.6';
                 };
                 updateSaveBtn();
+                const resolvedId = data.label?.id || opts.directId || null;
                 saveBtn.onclick = () => {
                     if (this.isLabelSaved(resolvedName)) this.unsaveLabel(resolvedName);
-                    else this.saveLabel(resolvedName);
+                    else this.saveLabel(resolvedName, resolvedId);
                     updateSaveBtn();
                 };
             }
