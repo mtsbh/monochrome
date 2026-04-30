@@ -4,6 +4,9 @@ const ALLOWED_HOSTS = [
     'sp-pr.audio.tidal.com',
     'sp-fa.audio.tidal.com',
     'resources.tidal.com',
+    'akamaized.net',
+    'qobuz.com',
+    'streaming.qobuz.com',
 ];
 
 function isAllowed(url) {
