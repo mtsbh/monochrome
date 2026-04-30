@@ -490,7 +490,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
             }
             listeningTracker.forceFlush();
             _previousTrackId = null;
-            player.playNext();
+            void player.playNext(0, { preserveGestureToken: true });
         });
 
         element.addEventListener('timeupdate', async () => {
