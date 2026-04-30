@@ -188,7 +188,7 @@ async function searchTidalAlbums(query) {
     const instances = [...TIDAL_INSTANCES].sort(() => Math.random() - 0.5);
     for (const base of instances) {
         try {
-            const res = await fetch(`${base}/search/?al=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(5000) });
+            const res = await fetch(`${base}/search/?al=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(2000) });
             if (!res.ok) continue;
             const data = await res.json();
             return data.data?.albums?.items ?? data.albums?.items ?? data.items ?? [];
@@ -328,12 +328,18 @@ exports.handler = async (event) => {
             if (qobuzTotal === null) qobuzTotal = batch.total;
             if (!batch.albums.length) break;
 
-            const tidalMatches = await Promise.all(
-                batch.albums.map(qa => matchOnTidal(qa).catch(() => null))
-            );
+            // Attempt TIDAL matching with a short per-batch timeout so a dead
+            // proxy doesn't stall the whole function. Falls back to Qobuz-only.
+            let tidalMatches;
+            try {
+                tidalMatches = await Promise.race([
+                    Promise.all(batch.albums.map(qa => matchOnTidal(qa).catch(() => null))),
+                    new Promise(resolve => setTimeout(() => resolve(null), 4000)),
+                ]);
+            } catch { tidalMatches = null; }
 
             for (let i = 0; i < batch.albums.length; i++) {
-                results.push(qobuzAlbumToCard(batch.albums[i], tidalMatches[i]));
+                results.push(qobuzAlbumToCard(batch.albums[i], tidalMatches?.[i] ?? null));
             }
 
             qobuzOffset += batch.albums.length;
