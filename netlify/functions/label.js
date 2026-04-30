@@ -156,7 +156,6 @@ async function getQobuzLabelAlbums(labelId, labelName, offset, limit, token) {
     const res = await fetch(url, { headers: { 'X-User-Auth-Token': token } });
     if (!res.ok) throw new Error(`Qobuz label/get failed: ${res.status}`);
     const data = await res.json();
-    console.log(`[label] label/get labelId=${labelId} offset=${offset} limit=${limit} → items=${data.albums?.items?.length} total=${data.albums?.total} keys=${Object.keys(data.albums || {}).join(',')}`);
     return { albums: data.albums?.items || [], total: data.albums?.total || 0 };
 }
 
@@ -264,7 +263,7 @@ exports.handler = async (event) => {
 
     return {
         statusCode: 200,
-        headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
+        headers: { ...corsHeaders, 'Cache-Control': 'no-store' },
         body: JSON.stringify({
             label: { id: label.id, name: label.name },
             albums: page,
