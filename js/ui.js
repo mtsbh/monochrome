@@ -5096,8 +5096,16 @@ export class UIRenderer {
             }
         } catch (err) {
             if (err.message.includes('not found') || err.message.includes('404')) {
+                // Name lookup failed — check if we have a saved ID for this label
+                const savedEntry = this.getSavedLabels().find(e =>
+                    typeof e === 'object' ? e.name === labelName : false
+                );
+                if (savedEntry?.id && !opts.directId) {
+                    // Retry with the stored ID instead
+                    return this.renderLabelPage(labelName, { ...opts, directId: savedEntry.id });
+                }
                 nameEl.textContent = labelName;
-                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">Label not found on Qobuz. Try pasting the Qobuz label URL (e.g. https://play.qobuz.com/label/12345) into the search box.</p>`;
+                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">Label not found by name. <a href="/labels" style="color:var(--highlight);text-decoration:underline;" onclick="event.preventDefault();history.pushState(null,'','/labels');window.dispatchEvent(new PopStateEvent('popstate'))">Go to Labels</a> and paste the Qobuz label URL to re-save it with an ID.</p>`;
                 metaEl.textContent = '';
             } else {
                 nameEl.textContent = labelName;
