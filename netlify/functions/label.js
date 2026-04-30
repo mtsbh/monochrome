@@ -264,7 +264,7 @@ exports.handler = async (event) => {
 
     return {
         statusCode: 200,
-        headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=3600' },
+        headers: { ...corsHeaders, 'Cache-Control': 'public, max-age=300' },
         body: JSON.stringify({
             label: { id: label.id, name: label.name },
             albums: page,
