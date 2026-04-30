@@ -5003,8 +5003,6 @@ export class UIRenderer {
 
         let nextOffset = 0;
         const limit = 100;
-        let totalQobuz = 0;
-        let totalMatched = 0;
 
         const fetchPage = async (pageOffset) => {
             const base = `/.netlify/functions/label`;
@@ -5038,8 +5036,6 @@ export class UIRenderer {
 
         try {
             const data = await fetchPage(0);
-            totalQobuz = data.total;
-            totalMatched += data.matched;
             nextOffset = data.nextOffset ?? limit;
 
             const resolvedName = data.label?.name || labelName;
@@ -5070,13 +5066,7 @@ export class UIRenderer {
                 return;
             }
 
-            const formatMeta = (d) => {
-                const total = d.total || 0;
-                const onTidal = d.matched || 0;
-                const qOnly = (d.albums?.filter(a => a._qobuzOnly)?.length) || 0;
-                if (qOnly > 0) return `${total} albums on Qobuz (${onTidal} also on TIDAL)`;
-                return `${onTidal} albums found`;
-            };
+            const formatMeta = (d) => `${d.total || d.albums?.length || 0} albums on Qobuz`;
 
             renderAlbums(data.albums);
             metaEl.textContent = formatMeta(data);
@@ -5088,7 +5078,6 @@ export class UIRenderer {
                     loadMoreBtn.textContent = 'Loading…';
                     try {
                         const more = await fetchPage(nextOffset);
-                        totalMatched += more.matched;
                         nextOffset = more.nextOffset ?? (nextOffset + limit);
                         renderAlbums(more.albums, true);
                         metaEl.textContent = formatMeta(more);
