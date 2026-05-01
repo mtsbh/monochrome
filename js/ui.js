@@ -4959,6 +4959,8 @@ export class UIRenderer {
         const listEl = document.getElementById('saved-labels-list');
         const rowsEl = document.getElementById('saved-labels-chips');
         const sortEl = document.getElementById('saved-labels-sort');
+        const viewListBtn = document.getElementById('saved-labels-view-list');
+        const viewGridBtn = document.getElementById('saved-labels-view-grid');
         const saved = this.getSavedLabels();
 
         if (!saved.length) {
@@ -4971,95 +4973,137 @@ export class UIRenderer {
         const countEl = document.getElementById('saved-labels-count');
         if (countEl) countEl.textContent = `${saved.length}`;
 
-        const getSort = () => sortEl?.value || 'az';
+        let currentView = localStorage.getItem('labels_view') || 'list';
 
-        const sortAndRender = () => {
-            const key = getSort();
-            const list = [...saved].sort((a, b) => {
-                const na = (typeof a === 'object' ? a.name : a);
-                const nb = (typeof b === 'object' ? b.name : b);
+        const applyView = (view) => {
+            currentView = view;
+            localStorage.setItem('labels_view', view);
+            rowsEl.classList.toggle('view-grid', view === 'grid');
+            viewListBtn?.classList.toggle('active', view === 'list');
+            viewGridBtn?.classList.toggle('active', view === 'grid');
+        };
+
+        const sortList = () => {
+            const key = sortEl?.value || 'oldest';
+            return [...saved].sort((a, b) => {
+                const na = typeof a === 'object' ? a.name : a;
+                const nb = typeof b === 'object' ? b.name : b;
                 const ta = (typeof a === 'object' ? a.addedAt : 0) || 0;
                 const tb = (typeof b === 'object' ? b.addedAt : 0) || 0;
                 if (key === 'az') return na.toLowerCase().localeCompare(nb.toLowerCase());
                 if (key === 'za') return nb.toLowerCase().localeCompare(na.toLowerCase());
                 if (key === 'newest') return tb - ta;
-                if (key === 'oldest') return ta - tb;
-                return 0;
+                return ta - tb; // oldest
             });
+        };
 
+        const navigateToLabel = (name, id) => {
+            if (id) navigate(`/label-id/${id}`);
+            else navigate(`/label/${encodeURIComponent(name)}`);
+        };
+
+        const fetchAndSetCover = (el, name, id, imgClass, placeholderClass) => {
+            setTimeout(async () => {
+                const setImg = (src) => {
+                    const ph = el.querySelector(`.${placeholderClass}`);
+                    if (!ph) return;
+                    const img = document.createElement('img');
+                    img.className = imgClass;
+                    img.src = src;
+                    img.alt = '';
+                    img.loading = 'lazy';
+                    img.onerror = () => img.remove();
+                    ph.replaceWith(img);
+                };
+                try {
+                    const r = await fetch(`/.netlify/functions/label-art?name=${encodeURIComponent(name)}`);
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (d.thumb) { setImg(d.thumb); return; }
+                    }
+                } catch {}
+                if (!id) return;
+                try {
+                    const r = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    const cover = d.albums?.[0]?.cover;
+                    if (cover) setImg(this.api.getCoverUrl(cover, '80'));
+                } catch {}
+            }, 0);
+        };
+
+        const renderList = (list) => {
             rowsEl.innerHTML = list.map(entry => {
                 const name = typeof entry === 'object' ? entry.name : entry;
                 const id = typeof entry === 'object' ? entry.id : null;
                 return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
-                    <div class="label-row-cover">
-                        <div class="label-row-cover-placeholder">${SVG_DISC(16)}</div>
-                    </div>
+                    <div class="label-row-cover"><div class="label-row-cover-placeholder">${SVG_DISC(14)}</div></div>
                     <span class="label-row-name">${escapeHtml(name)}</span>
                     ${!id ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
-                    <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(14)}</button>
+                    <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
                 </div>`;
             }).join('');
-
-            rowsEl.querySelectorAll('.label-row').forEach(row => {
+            list.forEach((entry, i) => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                const row = rowsEl.querySelectorAll('.label-row')[i];
+                if (!row) return;
                 row.addEventListener('click', (e) => {
                     if (e.target.closest('.label-row-remove')) return;
-                    if (row.dataset.labelId) navigate(`/label-id/${row.dataset.labelId}`);
-                    else navigate(`/label/${encodeURIComponent(row.dataset.label)}`);
+                    navigateToLabel(name, id);
                 });
-            });
-            rowsEl.querySelectorAll('.label-row-remove').forEach(removeBtn => {
-                removeBtn.addEventListener('click', (e) => {
+                row.querySelector('.label-row-remove').addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.unsaveLabel(removeBtn.dataset.label);
+                    this.unsaveLabel(name);
                     this.renderLabelsPage();
                 });
-            });
-
-            // Lazily fetch cover art for each row: Discogs first, Qobuz album cover fallback
-            const setRowCover = (row, src) => {
-                const placeholder = row.querySelector('.label-row-cover-placeholder');
-                if (!placeholder) return;
-                const img = document.createElement('img');
-                img.className = 'label-row-cover-img';
-                img.src = src;
-                img.alt = '';
-                img.loading = 'lazy';
-                img.onerror = () => img.remove();
-                placeholder.replaceWith(img);
-            };
-
-            // Stagger requests to avoid rate-limiting (Discogs: 60 req/min authenticated)
-            const rows = [...rowsEl.querySelectorAll('.label-row')];
-            rows.forEach((row, i) => {
-                setTimeout(async () => {
-                    const name = row.dataset.label;
-                    const id = row.dataset.labelId;
-                    try {
-                        // 1. Try Discogs label art
-                        const discogsRes = await fetch(`/.netlify/functions/label-art?name=${encodeURIComponent(name)}`);
-                        if (discogsRes.ok) {
-                            const discogsData = await discogsRes.json();
-                            if (discogsData.thumb) {
-                                setRowCover(row, discogsData.thumb);
-                                return;
-                            }
-                        }
-                    } catch {}
-                    // 2. Fallback: first Qobuz album cover (only if we have an ID)
-                    if (!id) return;
-                    try {
-                        const qRes = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
-                        if (!qRes.ok) return;
-                        const qData = await qRes.json();
-                        const cover = qData.albums?.[0]?.cover;
-                        if (cover) setRowCover(row, this.api.getCoverUrl(cover, '80'));
-                    } catch {}
-                }, i * 200); // 200ms stagger → ~5 req/sec, well under 60/min
+                setTimeout(() => fetchAndSetCover(row, name, id, 'label-row-cover-img', 'label-row-cover-placeholder'), i * 200);
             });
         };
 
-        sortAndRender();
-        if (sortEl) sortEl.onchange = sortAndRender;
+        const renderGrid = (list) => {
+            rowsEl.innerHTML = list.map(entry => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                return `<div class="label-card" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+                    <div class="label-card-cover-placeholder">${SVG_DISC(32)}</div>
+                    <div class="label-card-info">
+                        <div class="label-card-name">${escapeHtml(name)}</div>
+                    </div>
+                    <button class="label-card-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
+                </div>`;
+            }).join('');
+            list.forEach((entry, i) => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                const card = rowsEl.querySelectorAll('.label-card')[i];
+                if (!card) return;
+                card.addEventListener('click', (e) => {
+                    if (e.target.closest('.label-card-remove')) return;
+                    navigateToLabel(name, id);
+                });
+                card.querySelector('.label-card-remove').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.unsaveLabel(name);
+                    this.renderLabelsPage();
+                });
+                setTimeout(() => fetchAndSetCover(card, name, id, 'label-card-cover', 'label-card-cover-placeholder'), i * 200);
+            });
+        };
+
+        const render = () => {
+            const list = sortList();
+            if (currentView === 'grid') renderGrid(list);
+            else renderList(list);
+        };
+
+        applyView(currentView);
+        render();
+
+        if (sortEl) sortEl.onchange = render;
+        if (viewListBtn) viewListBtn.onclick = () => { applyView('list'); render(); };
+        if (viewGridBtn) viewGridBtn.onclick = () => { applyView('grid'); render(); };
 
         input.focus();
     }

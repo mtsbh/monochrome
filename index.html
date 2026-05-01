@@ -2687,16 +2687,23 @@
                                 <button id="labels-search-btn" class="btn-primary">Browse</button>
                             </div>
                             <div id="saved-labels-list" style="margin-top: 2rem; display: none;">
-                                <div class="saved-labels-header">
-                                    <span>Saved labels</span>
-                                    <span id="saved-labels-count" class="saved-labels-count"></span>
-                                    <div style="margin-left: auto;">
+                                <div class="saved-labels-toolbar">
+                                    <span class="saved-labels-title">Saved labels <span id="saved-labels-count" class="saved-labels-count"></span></span>
+                                    <div class="saved-labels-controls">
                                         <select id="saved-labels-sort" class="saved-labels-sort-select">
+                                            <option value="oldest">Oldest first</option>
+                                            <option value="newest">Newest first</option>
                                             <option value="az">A – Z</option>
                                             <option value="za">Z – A</option>
-                                            <option value="newest">Newest first</option>
-                                            <option value="oldest">Oldest first</option>
                                         </select>
+                                        <div class="saved-labels-view-toggle">
+                                            <button id="saved-labels-view-list" class="view-toggle-btn active" title="List view">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                            </button>
+                                            <button id="saved-labels-view-grid" class="view-toggle-btn" title="Grid view">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                                 <div id="saved-labels-chips" class="saved-labels-rows"></div>
