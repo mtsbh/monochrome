@@ -170,6 +170,7 @@ export class UIRenderer {
         this.renderLock = false;
         this.lastRecommendedTracks = [];
         this.currentArtistId = null;
+        this._labelArtCache = null; // lazy-loaded from localStorage once
         this.fullscreenLyricsVisible = true;
         this.fullscreenPlaybackStateCleanup = null;
         this.fullscreenDismissHandleCleanup = null;
@@ -4868,6 +4869,18 @@ export class UIRenderer {
         }
     }
 
+    _getLabelArtCache() {
+        if (!this._labelArtCache) {
+            try { this._labelArtCache = JSON.parse(localStorage.getItem('label_art_cache') || '{}'); }
+            catch { this._labelArtCache = {}; }
+        }
+        return this._labelArtCache;
+    }
+
+    _saveLabelArtCache() {
+        try { localStorage.setItem('label_art_cache', JSON.stringify(this._labelArtCache)); } catch {}
+    }
+
     getSavedLabels() {
         try {
             const raw = JSON.parse(localStorage.getItem('saved_labels') || '[]');
@@ -5002,14 +5015,9 @@ export class UIRenderer {
             else navigate(`/label/${encodeURIComponent(name)}`);
         };
 
-        // localStorage cache for Discogs art — persists across page visits
-        const ART_CACHE_KEY = 'label_art_cache';
-        const artCache = (() => {
-            try { return JSON.parse(localStorage.getItem(ART_CACHE_KEY) || '{}'); } catch { return {}; }
-        })();
-        const saveArtCache = () => {
-            try { localStorage.setItem(ART_CACHE_KEY, JSON.stringify(artCache)); } catch {}
-        };
+        // In-memory + localStorage cache for Discogs art, loaded once per session
+        const artCache = this._getLabelArtCache();
+        const saveArtCache = () => this._saveLabelArtCache();
 
         const setImg = (el, src, imgClass, placeholderClass) => {
             const ph = el.querySelector(`.${placeholderClass}`);
