@@ -4937,8 +4937,24 @@ export class UIRenderer {
         } catch { /* non-critical */ }
     }
 
+    async _migrateSavedLabelIds() {
+        const saved = this.getSavedLabels();
+        const needsId = saved.filter(e => typeof e === 'string');
+        if (!needsId.length) return;
+        for (const name of needsId) {
+            try {
+                const res = await fetch(`/.netlify/functions/label?name=${encodeURIComponent(name)}&offset=0&limit=1`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                if (data.label?.id) this.saveLabel(data.label.name || name, data.label.id);
+            } catch { /* non-critical */ }
+        }
+    }
+
     renderLabelsPage() {
         this.showPage('labels');
+        // Silently upgrade any string-only saved labels to include their Qobuz ID
+        this._migrateSavedLabelIds().catch(() => {});
         const input = document.getElementById('labels-search-input');
         const btn = document.getElementById('labels-search-btn');
         const go = () => {
