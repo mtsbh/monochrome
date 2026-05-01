@@ -417,6 +417,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
 
     let _previousTrackId = null;
     let _trackPlayStartTime = null;
+    const _playedAlbumIds = new Set();
 
     const setupMediaListeners = (element) => {
         element.addEventListener('loadstart', () => {
@@ -450,6 +451,19 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                         listeningTracker.forceFlush();
                     }
                     _previousTrackId = currentId;
+                    const nowAlbumId = player.currentTrack.album?.id ? String(player.currentTrack.album.id) : null;
+                    if (nowAlbumId) {
+                        // Remove playing highlight from all cards, then re-apply
+                        document.querySelectorAll('.album-playing').forEach(el => {
+                            el.classList.remove('album-playing');
+                            if (_playedAlbumIds.has(el.dataset.albumId)) el.classList.add('album-played');
+                        });
+                        _playedAlbumIds.add(nowAlbumId);
+                        document.querySelectorAll(`[data-album-id="${nowAlbumId}"]`).forEach(el => {
+                            el.classList.remove('album-played');
+                            el.classList.add('album-playing');
+                        });
+                    }
                     listeningTracker.onTrackStart(player.currentTrack);
                     _trackPlayStartTime = Date.now();
                 }

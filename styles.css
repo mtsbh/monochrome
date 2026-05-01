@@ -1860,6 +1860,17 @@ input[type='search']::-webkit-search-cancel-button {
     border-color: var(--border);
 }
 
+/* Played/playing state on album cards */
+.card.album-played {
+    opacity: 0.45;
+    filter: grayscale(60%);
+}
+
+.card.album-playing {
+    outline: 2px solid var(--highlight);
+    outline-offset: -2px;
+}
+
 /* Card Image wrapper interactions */
 .card-image-wrapper {
     position: relative;
