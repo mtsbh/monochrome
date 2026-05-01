@@ -4920,19 +4920,22 @@ export class UIRenderer {
         if (!authManager.user) return;
         try {
             const cloud = await syncManager.getSavedLabels();
-            if (!cloud) return;
-            // Merge: union of cloud + local, deduplicating by name
+            if (!cloud || !cloud.length) return;
+            // Cloud is authoritative — merge local-only entries that aren't in cloud
             const local = this.getSavedLabels();
             const byName = new Map();
-            for (const e of [...cloud, ...local]) {
+            // Cloud entries go in first (authoritative, may have ids)
+            for (const e of cloud) {
+                const name = typeof e === 'object' ? e.name : e;
+                byName.set(name, e);
+            }
+            // Add any local-only entries not present in cloud
+            for (const e of local) {
                 const name = typeof e === 'object' ? e.name : e;
                 if (!byName.has(name)) byName.set(name, e);
-                // Prefer object entries (have id) over plain strings
-                else if (typeof e === 'object' && typeof byName.get(name) !== 'object') byName.set(name, e);
             }
             const merged = [...byName.values()];
             localStorage.setItem('saved_labels', JSON.stringify(merged));
-            // Push merged back if different from cloud
             if (merged.length !== cloud.length) syncManager.setSavedLabels(merged).catch(() => {});
         } catch { /* non-critical */ }
     }
