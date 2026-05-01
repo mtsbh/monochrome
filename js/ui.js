@@ -6736,7 +6736,7 @@ export class UIRenderer {
                 likeBtn.classList.toggle('active', isLiked);
             }
 
-            if (track.album?.id) {
+            if (track.album?.id && !String(track.album.id).startsWith('qobuz-')) {
                 const { tracks } = await this.api.getAlbum(track.album.id);
                 if (tracks && tracks.length > 0) {
                     albumSection.style.display = 'block';

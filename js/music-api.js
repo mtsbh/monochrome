@@ -156,6 +156,9 @@ export class MusicAPI {
     }
 
     async getAlbum(id) {
+        if (typeof id === 'string' && id.startsWith('qobuz-')) {
+            throw new Error(`getAlbum not supported for Qobuz-only albums (${id})`);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getAlbum(cleanId);
