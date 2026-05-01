@@ -62,9 +62,7 @@ export function createRouter(ui) {
             case 'album': {
                 const { provider, id } = extractProviderAndId(param);
                 if (id.startsWith('qobuz-')) {
-                    const qobuzId = id.slice(6);
-                    window.open(`https://play.qobuz.com/album/${qobuzId}`, '_blank');
-                    history.back();
+                    await ui.renderAlbumPage(id.slice(6), 'qobuz');
                 } else {
                     await ui.renderAlbumPage(id, provider);
                 }

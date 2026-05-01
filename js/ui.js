@@ -3874,7 +3874,14 @@ export class UIRenderer {
         `;
 
         try {
-            const { album, tracks } = await this.api.getAlbum(albumId, provider);
+            let album, tracks;
+            if (provider === 'qobuz') {
+                const res = await fetch(`/.netlify/functions/qobuz-album?id=${encodeURIComponent(albumId)}`);
+                if (!res.ok) throw new Error(`Qobuz album fetch failed: ${res.status}`);
+                ({ album, tracks } = await res.json());
+            } else {
+                ({ album, tracks } = await this.api.getAlbum(albumId, provider));
+            }
             this.currentAlbumId = albumId;
 
             if (_isBlockedCopyright(album.copyright)) {
