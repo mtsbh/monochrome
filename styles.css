@@ -4113,6 +4113,14 @@ input:checked + .slider::before {
     text-decoration: line-through;
 }
 
+.queue-track-item.played {
+    opacity: 0.4;
+}
+
+.queue-track-item.played .track-item-cover {
+    filter: grayscale(100%);
+}
+
 #queue-modal-overlay {
     display: none;
     position: fixed;
