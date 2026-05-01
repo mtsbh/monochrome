@@ -5050,8 +5050,15 @@ export class UIRenderer {
             nextOffset = data.nextOffset ?? limit;
 
             const resolvedName = data.label?.name || labelName;
+            const resolvedId = data.label?.id || opts.directId || null;
             nameEl.textContent = resolvedName;
             document.title = `${resolvedName} — Monochrome`;
+
+            // If we resolved the label by name and got an ID back, rewrite the URL
+            // to the ID-based route so back/forward and refreshes use the stable ID.
+            if (resolvedId && !opts.directId && window.location.pathname.startsWith('/label/')) {
+                window.history.replaceState({}, '', `/label-id/${resolvedId}`);
+            }
 
             // Wire save button
             const saveBtn = document.getElementById('label-save-btn');
@@ -5063,7 +5070,6 @@ export class UIRenderer {
                     saveBtn.style.opacity = saved ? '1' : '0.6';
                 };
                 updateSaveBtn();
-                const resolvedId = data.label?.id || opts.directId || null;
                 saveBtn.onclick = () => {
                     if (this.isLabelSaved(resolvedName)) this.unsaveLabel(resolvedName);
                     else this.saveLabel(resolvedName, resolvedId);
