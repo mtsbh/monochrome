@@ -2,15 +2,20 @@
 import { getTrackArtists } from './utils.js';
 import { loadProfile } from './profile.js';
 
+// Capture native pushState before analytics scripts (e.g. Plausible) patch it.
+// Plausible monkey-patches history.pushState to fire analytics events, and when
+// an ad blocker blocks those requests the patched version may fail silently and
+// never call the real pushState, breaking all SPA navigation.
+const nativePushState = window.history.pushState.bind(window.history);
+
 export function navigate(path) {
     if (path === window.location.pathname) {
         return;
     }
     try {
-        window.history.pushState({}, '', path);
+        nativePushState({}, '', path);
     } catch (e) {
-        // analytics scripts (e.g. Plausible) monkey-patch pushState and may throw
-        // when blocked by an ad blocker — still dispatch popstate so routing works
+        // ignore — still dispatch popstate so routing works
     }
     window.dispatchEvent(new PopStateEvent('popstate'));
 }
