@@ -684,6 +684,14 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                 // that cannot be decoded by decodeAudioData.
                 const getDirectUrl = async (quality) => {
                     try {
+                        // Qobuz tracks: getStreamUrl returns a direct audio URL, not a DASH manifest
+                        if (player.currentTrack.id && String(player.currentTrack.id).startsWith('qobuz-')) {
+                            const result = await player.api.getStreamUrl(player.currentTrack.id, quality);
+                            if (result?.url && !result.url.includes('.mpd') && !result.url.includes('.m3u8')) {
+                                return result.url;
+                            }
+                            return null;
+                        }
                         const lookup = await player.api.getTrack(player.currentTrack.id, quality);
                         if (lookup?.originalTrackUrl) return lookup.originalTrackUrl;
                         if (lookup?.info?.manifest) {
