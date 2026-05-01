@@ -6,7 +6,12 @@ export function navigate(path) {
     if (path === window.location.pathname) {
         return;
     }
-    window.history.pushState({}, '', path);
+    try {
+        window.history.pushState({}, '', path);
+    } catch (e) {
+        // analytics scripts (e.g. Plausible) monkey-patch pushState and may throw
+        // when blocked by an ad blocker — still dispatch popstate so routing works
+    }
     window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
