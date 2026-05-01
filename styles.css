@@ -11774,7 +11774,7 @@ img.cd {
 /* Saved labels list */
 .saved-labels-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.5rem;
     font-size: 0.75rem;
     text-transform: uppercase;
@@ -11784,6 +11784,17 @@ img.cd {
 }
 .saved-labels-count {
     font-variant-numeric: tabular-nums;
+}
+.saved-labels-sort-select {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: inherit;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .saved-labels-rows {
     display: flex;
@@ -11797,7 +11808,7 @@ img.cd {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.65rem 1rem;
+    padding: 0.5rem 1rem;
     cursor: pointer;
     transition: background 0.12s;
     border-bottom: 1px solid var(--border);
@@ -11809,11 +11820,29 @@ img.cd {
 .label-row:hover {
     background: var(--card-hover, rgba(255,255,255,0.06));
 }
-.label-row-icon {
+.label-row-cover {
     flex-shrink: 0;
-    opacity: 0.35;
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--secondary);
     display: flex;
     align-items: center;
+    justify-content: center;
+}
+.label-row-cover-img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    display: block;
+    border-radius: 4px;
+}
+.label-row-cover-placeholder {
+    opacity: 0.25;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .label-row-name {
     flex: 1;

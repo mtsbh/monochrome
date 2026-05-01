@@ -99,6 +99,7 @@ import {
     SVG_RIGHT_ARROW,
     SVG_CLOCK,
     SVG_CHECKBOX,
+    SVG_DISC,
 } from './icons.js';
 
 const setFullscreenUIToggleIcon = (button, visualizerOnlyMode) => {
@@ -4896,12 +4897,13 @@ export class UIRenderer {
         const saved = this.getSavedLabels();
         const idx = saved.findIndex(e => typeof e === 'object' ? e.name === name : e === name);
         if (idx === -1) {
-            saved.push(id ? { name, id } : name);
-        } else if (id && typeof saved[idx] !== 'object') {
-            // Upgrade string entry to include id
-            saved[idx] = { name, id };
+            saved.push({ name, ...(id ? { id } : {}), addedAt: Date.now() });
+        } else if (typeof saved[idx] !== 'object') {
+            saved[idx] = { name, ...(id ? { id } : {}), addedAt: Date.now() };
+        } else if (id && !saved[idx].id) {
+            saved[idx] = { ...saved[idx], id };
         } else {
-            return; // already saved, no change needed
+            return;
         }
         this._persistSavedLabels(saved);
     }
@@ -4947,7 +4949,6 @@ export class UIRenderer {
         const go = () => {
             const q = input.value.trim();
             if (!q) return;
-            // If user pastes a Qobuz label URL, extract the ID for direct lookup
             const urlMatch = q.match(/play\.qobuz\.com\/label\/(\d+)/);
             if (urlMatch) navigate(`/label-id/${urlMatch[1]}`);
             else navigate(`/label/${encodeURIComponent(q)}`);
@@ -4955,48 +4956,89 @@ export class UIRenderer {
         btn.onclick = go;
         input.onkeydown = (e) => { if (e.key === 'Enter') go(); };
 
-        // Render saved labels list
         const listEl = document.getElementById('saved-labels-list');
-        const chipsEl = document.getElementById('saved-labels-chips');
+        const rowsEl = document.getElementById('saved-labels-chips');
+        const sortEl = document.getElementById('saved-labels-sort');
         const saved = this.getSavedLabels();
-        if (saved.length) {
-            const sorted = [...saved].sort((a, b) => {
-                const na = (typeof a === 'object' ? a.name : a).toLowerCase();
-                const nb = (typeof b === 'object' ? b.name : b).toLowerCase();
-                return na.localeCompare(nb);
+
+        if (!saved.length) {
+            listEl.style.display = 'none';
+            input.focus();
+            return;
+        }
+
+        listEl.style.display = '';
+        const countEl = document.getElementById('saved-labels-count');
+        if (countEl) countEl.textContent = `${saved.length}`;
+
+        const getSort = () => sortEl?.value || 'az';
+
+        const sortAndRender = () => {
+            const key = getSort();
+            const list = [...saved].sort((a, b) => {
+                const na = (typeof a === 'object' ? a.name : a);
+                const nb = (typeof b === 'object' ? b.name : b);
+                const ta = (typeof a === 'object' ? a.addedAt : 0) || 0;
+                const tb = (typeof b === 'object' ? b.addedAt : 0) || 0;
+                if (key === 'az') return na.toLowerCase().localeCompare(nb.toLowerCase());
+                if (key === 'za') return nb.toLowerCase().localeCompare(na.toLowerCase());
+                if (key === 'newest') return tb - ta;
+                if (key === 'oldest') return ta - tb;
+                return 0;
             });
-            chipsEl.innerHTML = sorted.map(entry => {
+
+            rowsEl.innerHTML = list.map(entry => {
                 const name = typeof entry === 'object' ? entry.name : entry;
                 const id = typeof entry === 'object' ? entry.id : null;
-                const hasId = !!id;
                 return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
-                    <div class="label-row-icon">${SVG_BOOKMARK(16)}</div>
+                    <div class="label-row-cover">
+                        <div class="label-row-cover-placeholder">${SVG_DISC(16)}</div>
+                    </div>
                     <span class="label-row-name">${escapeHtml(name)}</span>
-                    ${!hasId ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
+                    ${!id ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
                     <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(14)}</button>
                 </div>`;
             }).join('');
-            listEl.style.display = '';
-            const countEl = document.getElementById('saved-labels-count');
-            if (countEl) countEl.textContent = `${saved.length}`;
 
-            chipsEl.querySelectorAll('.label-row').forEach(row => {
+            rowsEl.querySelectorAll('.label-row').forEach(row => {
                 row.addEventListener('click', (e) => {
                     if (e.target.closest('.label-row-remove')) return;
                     if (row.dataset.labelId) navigate(`/label-id/${row.dataset.labelId}`);
                     else navigate(`/label/${encodeURIComponent(row.dataset.label)}`);
                 });
             });
-            chipsEl.querySelectorAll('.label-row-remove').forEach(removeBtn => {
+            rowsEl.querySelectorAll('.label-row-remove').forEach(removeBtn => {
                 removeBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.unsaveLabel(removeBtn.dataset.label);
                     this.renderLabelsPage();
                 });
             });
-        } else {
-            listEl.style.display = 'none';
-        }
+
+            // Lazily fetch cover for each label row that has an ID
+            rowsEl.querySelectorAll('.label-row[data-label-id]').forEach(async (row) => {
+                const id = row.dataset.labelId;
+                const placeholder = row.querySelector('.label-row-cover-placeholder');
+                try {
+                    const res = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    const cover = data.albums?.[0]?.cover;
+                    if (!cover || !placeholder) return;
+                    const coverUrl = this.api.getCoverUrl(cover, '80');
+                    const img = document.createElement('img');
+                    img.className = 'label-row-cover-img';
+                    img.src = coverUrl;
+                    img.alt = '';
+                    img.loading = 'lazy';
+                    img.onerror = () => img.remove();
+                    placeholder.replaceWith(img);
+                } catch {}
+            });
+        };
+
+        sortAndRender();
+        if (sortEl) sortEl.onchange = sortAndRender;
 
         input.focus();
     }
