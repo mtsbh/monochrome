@@ -5002,35 +5002,96 @@ export class UIRenderer {
             else navigate(`/label/${encodeURIComponent(name)}`);
         };
 
-        const fetchAndSetCover = (el, name, id, imgClass, placeholderClass) => {
-            setTimeout(async () => {
-                const setImg = (src) => {
-                    const ph = el.querySelector(`.${placeholderClass}`);
-                    if (!ph) return;
-                    const img = document.createElement('img');
-                    img.className = imgClass;
-                    img.src = src;
-                    img.alt = '';
-                    img.loading = 'lazy';
-                    img.onerror = () => img.remove();
-                    ph.replaceWith(img);
-                };
+        // localStorage cache for Discogs art — persists across page visits
+        const ART_CACHE_KEY = 'label_art_cache';
+        const artCache = (() => {
+            try { return JSON.parse(localStorage.getItem(ART_CACHE_KEY) || '{}'); } catch { return {}; }
+        })();
+        const saveArtCache = () => {
+            try { localStorage.setItem(ART_CACHE_KEY, JSON.stringify(artCache)); } catch {}
+        };
+
+        const setImg = (el, src, imgClass, placeholderClass) => {
+            const ph = el.querySelector(`.${placeholderClass}`);
+            if (!ph) return;
+            const img = document.createElement('img');
+            img.className = imgClass;
+            img.src = src;
+            img.alt = '';
+            img.loading = 'lazy';
+            img.onerror = () => img.remove();
+            ph.replaceWith(img);
+        };
+
+        // Sequential fetch queue — one request at a time, 1s apart to stay under 60/min
+        const fetchQueue = [];
+        let fetchRunning = false;
+        const runQueue = async () => {
+            if (fetchRunning) return;
+            fetchRunning = true;
+            while (fetchQueue.length) {
+                const task = fetchQueue.shift();
+                await task();
+                await new Promise(r => setTimeout(r, 1050));
+            }
+            fetchRunning = false;
+        };
+
+        const queueCoverFetch = (el, name, id, imgClass, placeholderClass) => {
+            // Serve from cache immediately if available
+            if (artCache[name]) {
+                if (artCache[name] !== 'none') setImg(el, artCache[name], imgClass, placeholderClass);
+                return;
+            }
+            fetchQueue.push(async () => {
+                // Element may have been removed from DOM if user navigated away
+                if (!rowsEl.contains(el)) return;
                 try {
                     const r = await fetch(`/.netlify/functions/label-art?name=${encodeURIComponent(name)}`);
                     if (r.ok) {
                         const d = await r.json();
-                        if (d.thumb) { setImg(d.thumb); return; }
+                        if (d.thumb) {
+                            artCache[name] = d.thumb;
+                            saveArtCache();
+                            setImg(el, d.thumb, imgClass, placeholderClass);
+                            return;
+                        }
                     }
                 } catch {}
-                if (!id) return;
-                try {
-                    const r = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
-                    if (!r.ok) return;
-                    const d = await r.json();
-                    const cover = d.albums?.[0]?.cover;
-                    if (cover) setImg(this.api.getCoverUrl(cover, '80'));
-                } catch {}
-            }, 0);
+                // Fallback: first Qobuz album cover
+                if (id) {
+                    try {
+                        const r = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
+                        if (r.ok) {
+                            const d = await r.json();
+                            const cover = d.albums?.[0]?.cover;
+                            if (cover) {
+                                const url = this.api.getCoverUrl(cover, '80');
+                                artCache[name] = url;
+                                saveArtCache();
+                                setImg(el, url, imgClass, placeholderClass);
+                                return;
+                            }
+                        }
+                    } catch {}
+                }
+                artCache[name] = 'none'; // mark as not found so we don't retry
+                saveArtCache();
+            });
+            runQueue();
+        };
+
+        const wireItem = (el, name, id, removeSelector, imgClass, placeholderClass) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest(removeSelector)) return;
+                navigateToLabel(name, id);
+            });
+            el.querySelector(removeSelector).addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.unsaveLabel(name);
+                this.renderLabelsPage();
+            });
+            queueCoverFetch(el, name, id, imgClass, placeholderClass);
         };
 
         const renderList = (list) => {
@@ -5044,21 +5105,11 @@ export class UIRenderer {
                     <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
                 </div>`;
             }).join('');
-            list.forEach((entry, i) => {
+            rowsEl.querySelectorAll('.label-row').forEach((row, i) => {
+                const entry = list[i];
                 const name = typeof entry === 'object' ? entry.name : entry;
                 const id = typeof entry === 'object' ? entry.id : null;
-                const row = rowsEl.querySelectorAll('.label-row')[i];
-                if (!row) return;
-                row.addEventListener('click', (e) => {
-                    if (e.target.closest('.label-row-remove')) return;
-                    navigateToLabel(name, id);
-                });
-                row.querySelector('.label-row-remove').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.unsaveLabel(name);
-                    this.renderLabelsPage();
-                });
-                setTimeout(() => fetchAndSetCover(row, name, id, 'label-row-cover-img', 'label-row-cover-placeholder'), i * 200);
+                wireItem(row, name, id, '.label-row-remove', 'label-row-cover-img', 'label-row-cover-placeholder');
             });
         };
 
@@ -5068,27 +5119,15 @@ export class UIRenderer {
                 const id = typeof entry === 'object' ? entry.id : null;
                 return `<div class="label-card" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
                     <div class="label-card-cover-placeholder">${SVG_DISC(32)}</div>
-                    <div class="label-card-info">
-                        <div class="label-card-name">${escapeHtml(name)}</div>
-                    </div>
+                    <div class="label-card-info"><div class="label-card-name">${escapeHtml(name)}</div></div>
                     <button class="label-card-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
                 </div>`;
             }).join('');
-            list.forEach((entry, i) => {
+            rowsEl.querySelectorAll('.label-card').forEach((card, i) => {
+                const entry = list[i];
                 const name = typeof entry === 'object' ? entry.name : entry;
                 const id = typeof entry === 'object' ? entry.id : null;
-                const card = rowsEl.querySelectorAll('.label-card')[i];
-                if (!card) return;
-                card.addEventListener('click', (e) => {
-                    if (e.target.closest('.label-card-remove')) return;
-                    navigateToLabel(name, id);
-                });
-                card.querySelector('.label-card-remove').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.unsaveLabel(name);
-                    this.renderLabelsPage();
-                });
-                setTimeout(() => fetchAndSetCover(card, name, id, 'label-card-cover', 'label-card-cover-placeholder'), i * 200);
+                wireItem(card, name, id, '.label-card-remove', 'label-card-cover', 'label-card-cover-placeholder');
             });
         };
 
