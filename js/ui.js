@@ -3993,9 +3993,14 @@ export class UIRenderer {
             metaEl.innerHTML =
                 (dateDisplay ? `${dateDisplay} • ` : '') + `${tracks.length} tracks • ${formatDuration(totalDuration)}`;
 
-            const labelName = extractLabelName(firstCopyright);
-            const labelHtml = labelName
-                ? ` • <a href="/label/${encodeURIComponent(labelName)}" class="label-link" title="${escapeHtml(firstCopyright || '')}">${escapeHtml(labelName)}</a>`
+            // Prefer the structured label object (present on Qobuz albums) over copyright string parsing
+            const structuredLabel = album.label;
+            const labelName = structuredLabel?.name || extractLabelName(firstCopyright);
+            const labelHref = structuredLabel?.id
+                ? `/label-id/${structuredLabel.id}`
+                : labelName ? `/label/${encodeURIComponent(labelName)}` : null;
+            const labelHtml = labelName && labelHref
+                ? ` • <a href="${labelHref}" class="label-link" title="${escapeHtml(firstCopyright || '')}">${escapeHtml(labelName)}</a>`
                 : (firstCopyright ? ` • ${escapeHtml(firstCopyright)}` : '');
             prodEl.innerHTML =
                 `By <a href="/artist/${album.artist.id}">${escapeHtml(album.artist.name)}</a>` +
