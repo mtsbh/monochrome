@@ -56,6 +56,11 @@ export class MusicAPI {
         this.podcastsAPI = new PodcastsAPI();
         this._settings = settings;
         this.videoArtworkCache = new Map();
+        this.qobuzIsrcCache = new Map();
+    }
+
+    registerQobuzTrack(id, isrc) {
+        if (isrc) this.qobuzIsrcCache.set(id, isrc);
     }
 
     static async initialize(settings) {
@@ -210,6 +215,14 @@ export class MusicAPI {
 
     // Stream methods
     async getStreamUrl(id, quality) {
+        if (typeof id === 'string' && id.startsWith('qobuz-')) {
+            const isrc = this.qobuzIsrcCache.get(id);
+            if (isrc) {
+                const result = await this.tidalAPI.getQobuzStreamUrl(isrc, quality);
+                if (result && result.url) return result;
+            }
+            throw new Error(`No ISRC registered for Qobuz track ${id}`);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getStreamUrl(cleanId, quality);

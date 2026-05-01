@@ -3879,6 +3879,7 @@ export class UIRenderer {
                 const res = await fetch(`/.netlify/functions/qobuz-album?id=${encodeURIComponent(albumId)}`);
                 if (!res.ok) throw new Error(`Qobuz album fetch failed: ${res.status}`);
                 ({ album, tracks } = await res.json());
+                tracks.forEach(t => { if (t.isrc) this.api.registerQobuzTrack(t.id, t.isrc); });
             } else {
                 ({ album, tracks } = await this.api.getAlbum(albumId, provider));
             }
