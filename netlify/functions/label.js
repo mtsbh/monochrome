@@ -242,6 +242,7 @@ exports.handler = async (event) => {
     const SCAN_BATCH = 50;
     const MAX_SCANNED = 500;
     const results = [];
+    const seenIds = new Set();
     let qobuzOffset = offset;
     let qobuzTotal = null;
 
@@ -250,7 +251,12 @@ exports.handler = async (event) => {
             const batch = await getQobuzLabelAlbums(label.id, label.name, qobuzOffset, SCAN_BATCH, token);
             if (qobuzTotal === null) qobuzTotal = batch.total;
             if (!batch.albums.length) break;
-            for (const qa of batch.albums) results.push(qobuzAlbumToCard(qa));
+            for (const qa of batch.albums) {
+                if (!seenIds.has(qa.id)) {
+                    seenIds.add(qa.id);
+                    results.push(qobuzAlbumToCard(qa));
+                }
+            }
             qobuzOffset += batch.albums.length;
             if (qobuzOffset >= batch.total) break;
         }
