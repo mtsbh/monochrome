@@ -5015,25 +5015,46 @@ export class UIRenderer {
                 });
             });
 
-            // Lazily fetch cover for each label row that has an ID
-            rowsEl.querySelectorAll('.label-row[data-label-id]').forEach(async (row) => {
-                const id = row.dataset.labelId;
+            // Lazily fetch cover art for each row: Discogs first, Qobuz album cover fallback
+            const setRowCover = (row, src) => {
                 const placeholder = row.querySelector('.label-row-cover-placeholder');
-                try {
-                    const res = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
-                    if (!res.ok) return;
-                    const data = await res.json();
-                    const cover = data.albums?.[0]?.cover;
-                    if (!cover || !placeholder) return;
-                    const coverUrl = this.api.getCoverUrl(cover, '80');
-                    const img = document.createElement('img');
-                    img.className = 'label-row-cover-img';
-                    img.src = coverUrl;
-                    img.alt = '';
-                    img.loading = 'lazy';
-                    img.onerror = () => img.remove();
-                    placeholder.replaceWith(img);
-                } catch {}
+                if (!placeholder) return;
+                const img = document.createElement('img');
+                img.className = 'label-row-cover-img';
+                img.src = src;
+                img.alt = '';
+                img.loading = 'lazy';
+                img.onerror = () => img.remove();
+                placeholder.replaceWith(img);
+            };
+
+            // Stagger requests to avoid rate-limiting (Discogs: 60 req/min authenticated)
+            const rows = [...rowsEl.querySelectorAll('.label-row')];
+            rows.forEach((row, i) => {
+                setTimeout(async () => {
+                    const name = row.dataset.label;
+                    const id = row.dataset.labelId;
+                    try {
+                        // 1. Try Discogs label art
+                        const discogsRes = await fetch(`/.netlify/functions/label-art?name=${encodeURIComponent(name)}`);
+                        if (discogsRes.ok) {
+                            const discogsData = await discogsRes.json();
+                            if (discogsData.thumb) {
+                                setRowCover(row, discogsData.thumb);
+                                return;
+                            }
+                        }
+                    } catch {}
+                    // 2. Fallback: first Qobuz album cover (only if we have an ID)
+                    if (!id) return;
+                    try {
+                        const qRes = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
+                        if (!qRes.ok) return;
+                        const qData = await qRes.json();
+                        const cover = qData.albums?.[0]?.cover;
+                        if (cover) setRowCover(row, this.api.getCoverUrl(cover, '80'));
+                    } catch {}
+                }, i * 200); // 200ms stagger → ~5 req/sec, well under 60/min
             });
         };
 
