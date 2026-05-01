@@ -4104,6 +4104,13 @@ export class UIRenderer {
             });
             await this.renderListWithTracks(tracklistContainer, tracks, false, true);
 
+            if (playBtn) {
+                playBtn.onclick = () => {
+                    this.player.setQueue(tracks, 0);
+                    this.player.playTrackFromQueue();
+                };
+            }
+
             recentActivityManager.addAlbum(album);
 
             // Update header like button

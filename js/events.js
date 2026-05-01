@@ -1285,9 +1285,19 @@ export async function handleTrackAction(
             let collectionItem = item;
 
             if (type === 'album') {
-                const data = await api.getAlbum(item.id);
-                tracks = data.tracks;
-                collectionItem = data.album || item;
+                if (typeof item.id === 'string' && item.id.startsWith('qobuz-')) {
+                    const qobuzId = item.id.slice(6);
+                    const res = await fetch(`/.netlify/functions/qobuz-album?id=${encodeURIComponent(qobuzId)}`);
+                    if (!res.ok) throw new Error(`Qobuz album fetch failed: ${res.status}`);
+                    const data = await res.json();
+                    tracks = data.tracks;
+                    tracks.forEach(t => { if (t.isrc) api.registerQobuzTrack(t.id, t.isrc); });
+                    collectionItem = data.album || item;
+                } else {
+                    const data = await api.getAlbum(item.id);
+                    tracks = data.tracks;
+                    collectionItem = data.album || item;
+                }
             } else if (type === 'playlist') {
                 const data = await api.getPlaylist(item.uuid);
                 tracks = data.tracks;
