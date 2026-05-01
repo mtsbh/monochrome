@@ -3110,7 +3110,7 @@ export const modalSettings = {
         if (document.querySelector('.modal.active')) {
             return true;
         }
-        if (document.querySelector('.modal-overlay')) {
+        if (document.querySelector('body > .modal-overlay')) {
             return true;
         }
         const modalIds = [
