@@ -4955,32 +4955,42 @@ export class UIRenderer {
         btn.onclick = go;
         input.onkeydown = (e) => { if (e.key === 'Enter') go(); };
 
-        // Render saved labels chips
+        // Render saved labels list
         const listEl = document.getElementById('saved-labels-list');
         const chipsEl = document.getElementById('saved-labels-chips');
         const saved = this.getSavedLabels();
         if (saved.length) {
-            chipsEl.innerHTML = saved.map(entry => {
+            const sorted = [...saved].sort((a, b) => {
+                const na = (typeof a === 'object' ? a.name : a).toLowerCase();
+                const nb = (typeof b === 'object' ? b.name : b).toLowerCase();
+                return na.localeCompare(nb);
+            });
+            chipsEl.innerHTML = sorted.map(entry => {
                 const name = typeof entry === 'object' ? entry.name : entry;
                 const id = typeof entry === 'object' ? entry.id : null;
-                return `<span class="label-chip" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''} style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.3rem 0.75rem;border-radius:999px;background:var(--card-bg,rgba(255,255,255,0.08));cursor:pointer;font-size:0.875rem;">
-                    ${escapeHtml(name)}
-                    <span class="label-chip-remove" data-label="${escapeHtml(name)}" title="Remove" style="opacity:0.5;font-size:0.75rem;line-height:1;padding:0 0.1rem;">✕</span>
-                </span>`;
+                const hasId = !!id;
+                return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+                    <div class="label-row-icon">${SVG_BOOKMARK(16)}</div>
+                    <span class="label-row-name">${escapeHtml(name)}</span>
+                    ${!hasId ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
+                    <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(14)}</button>
+                </div>`;
             }).join('');
             listEl.style.display = '';
+            const countEl = document.getElementById('saved-labels-count');
+            if (countEl) countEl.textContent = `${saved.length}`;
 
-            chipsEl.querySelectorAll('.label-chip').forEach(chip => {
-                chip.addEventListener('click', (e) => {
-                    if (e.target.closest('.label-chip-remove')) return;
-                    if (chip.dataset.labelId) navigate(`/label-id/${chip.dataset.labelId}`);
-                    else navigate(`/label/${encodeURIComponent(chip.dataset.label)}`);
+            chipsEl.querySelectorAll('.label-row').forEach(row => {
+                row.addEventListener('click', (e) => {
+                    if (e.target.closest('.label-row-remove')) return;
+                    if (row.dataset.labelId) navigate(`/label-id/${row.dataset.labelId}`);
+                    else navigate(`/label/${encodeURIComponent(row.dataset.label)}`);
                 });
             });
-            chipsEl.querySelectorAll('.label-chip-remove').forEach(btn => {
-                btn.addEventListener('click', (e) => {
+            chipsEl.querySelectorAll('.label-row-remove').forEach(removeBtn => {
+                removeBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.unsaveLabel(btn.dataset.label);
+                    this.unsaveLabel(removeBtn.dataset.label);
                     this.renderLabelsPage();
                 });
             });

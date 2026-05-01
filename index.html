@@ -2686,9 +2686,12 @@
                                 <input id="labels-search-input" class="search-input" type="text" placeholder="Label name or Qobuz URL…" style="flex: 1;" />
                                 <button id="labels-search-btn" class="btn-primary">Browse</button>
                             </div>
-                            <div id="saved-labels-list" style="margin-top: 1.5rem; display: none;">
-                                <div style="font-size: 0.75rem; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.5rem;">Saved</div>
-                                <div id="saved-labels-chips" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
+                            <div id="saved-labels-list" style="margin-top: 2rem; display: none;">
+                                <div class="saved-labels-header">
+                                    <span>Saved labels</span>
+                                    <span id="saved-labels-count" class="saved-labels-count"></span>
+                                </div>
+                                <div id="saved-labels-chips" class="saved-labels-rows"></div>
                             </div>
                         </div>
                     </header>
