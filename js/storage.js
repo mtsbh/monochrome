@@ -3135,8 +3135,8 @@ export const modalSettings = {
     },
 
     closeAllModals() {
-        // Close all modal overlays
-        document.querySelectorAll('.modal-overlay').forEach((modal) => {
+        // Close dynamically-created overlay modals (direct children of body only)
+        document.querySelectorAll('body > .modal-overlay').forEach((modal) => {
             modal.remove();
         });
 
