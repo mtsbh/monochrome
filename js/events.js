@@ -417,7 +417,8 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
 
     let _previousTrackId = null;
     let _trackPlayStartTime = null;
-    const _playedAlbumIds = new Set();
+    const _PLAYED_ALBUMS_KEY = 'played-album-ids';
+    const _playedAlbumIds = new Set(JSON.parse(localStorage.getItem(_PLAYED_ALBUMS_KEY) || '[]'));
 
     const setupMediaListeners = (element) => {
         element.addEventListener('loadstart', () => {
@@ -459,6 +460,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                             if (_playedAlbumIds.has(el.dataset.albumId)) el.classList.add('album-played');
                         });
                         _playedAlbumIds.add(nowAlbumId);
+                        localStorage.setItem(_PLAYED_ALBUMS_KEY, JSON.stringify([..._playedAlbumIds]));
                         document.querySelectorAll(`[data-album-id="${nowAlbumId}"]`).forEach(el => {
                             el.classList.remove('album-played');
                             el.classList.add('album-playing');

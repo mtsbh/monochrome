@@ -5220,11 +5220,16 @@ export class UIRenderer {
             } else {
                 albumsContainer.innerHTML = html;
             }
+            const playedAlbumIds = new Set(JSON.parse(localStorage.getItem('played-album-ids') || '[]'));
+            const currentAlbumId = this.player?.currentTrack?.album?.id ? String(this.player.currentTrack.album.id) : null;
             albums.forEach((album) => {
                 const el = albumsContainer.querySelector(`[data-album-id="${album.id}"]`);
                 if (el) {
                     trackDataStore.set(el, album);
                     this.updateLikeState(el, 'album', album.id);
+                    const id = String(album.id);
+                    if (id === currentAlbumId) el.classList.add('album-playing');
+                    else if (playedAlbumIds.has(id)) el.classList.add('album-played');
                 }
             });
         };
