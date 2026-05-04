@@ -2463,6 +2463,7 @@ export const sidebarSectionSettings = {
     SHOW_ABOUT_KEY: 'sidebar-show-about',
     SHOW_DISCORD_KEY: 'sidebar-show-discord',
     SHOW_GITHUB_KEY: 'sidebar-show-github',
+    SHOW_PARTY_KEY: 'sidebar-show-party',
     ORDER_KEY: 'sidebar-menu-order',
     DEFAULT_ORDER: [
         'sidebar-nav-home',
@@ -2474,6 +2475,7 @@ export const sidebarSectionSettings = {
         'sidebar-nav-settings',
         'sidebar-nav-about-bottom',
         'sidebar-nav-discordbtn',
+        'sidebar-nav-party',
         'sidebar-nav-githubbtn',
     ],
 
@@ -2599,6 +2601,19 @@ export const sidebarSectionSettings = {
         localStorage.setItem(this.SHOW_GITHUB_KEY, enabled ? 'true' : 'false');
     },
 
+    shouldShowParty() {
+        try {
+            const val = localStorage.getItem(this.SHOW_PARTY_KEY);
+            return val === null ? true : val === 'true';
+        } catch {
+            return true;
+        }
+    },
+
+    setShowParty(enabled) {
+        localStorage.setItem(this.SHOW_PARTY_KEY, enabled ? 'true' : 'false');
+    },
+
     normalizeOrder(order) {
         const baseOrder = this.DEFAULT_ORDER;
         const safeOrder = Array.isArray(order) ? order.filter((id) => baseOrder.includes(id)) : [];
@@ -2670,6 +2685,7 @@ export const sidebarSectionSettings = {
             { id: 'sidebar-nav-settings', check: this.shouldShowSettings() },
             { id: 'sidebar-nav-about-bottom', check: this.shouldShowAbout() },
             { id: 'sidebar-nav-discordbtn', check: this.shouldShowDiscord() },
+            { id: 'sidebar-nav-party', check: this.shouldShowParty() },
             { id: 'sidebar-nav-githubbtn', check: this.shouldShowGithub() },
         ];
 

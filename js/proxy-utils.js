@@ -8,3 +8,10 @@ export const getProxyUrl = (url) => {
     if (url.startsWith(SELF_PROXY) || url.startsWith(FALLBACK_PROXY)) return url;
     return `${SELF_PROXY}?url=${encodeURIComponent(url)}`;
 };
+
+export const wrapTidalUrl = (url) => {
+    if (!url || typeof url !== 'string') return url;
+    return url
+        .replace('openapi.tidal.com', 'tidal-api.geeked.wtf/openapi')
+        .replace('api.tidal.com', 'tidal-api.geeked.wtf/api');
+};
