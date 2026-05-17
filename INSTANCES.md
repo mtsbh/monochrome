@@ -1,7 +1,6 @@
 > [!important]
 > April 30th, 2026: this file is currently outdated, as we have switched away from hifi-api (kinda), however were lowk too lazy right now, though it will be updated soon.
 
-
 # Monochrome Instances
 
 This document lists public instances of Monochrome that you can use. Instances are community-hosted versions of Monochrome that provide access to the application.
@@ -12,11 +11,12 @@ This document lists public instances of Monochrome that you can use. Instances a
 
 The official Monochrome instance maintained by the core team:
 
-| URL                                                    | Status   | Notes            |
-| ------------------------------------------------------ | -------- | ---------------- |
-| [monochrome.tf](https://monochrome.tf)                 | Official | Primary instance |
-| [monochrome.samidy.com](https://monochrome.samidy.com) | Official | Secondary mirror |
-| [lossless.wtf](https://lossless.wtf)                   | Official | Failover mirror  |
+| URL                                                       | Status   | Notes            |
+| --------------------------------------------------------- | -------- | ---------------- |
+| [monochrome.tf](https://monochrome.tf)                    | Official | Primary instance |
+| [monochrome.samidy.com](https://monochrome.samidy.com)    | Official | Secondary mirror |
+| [lossless.wtf](https://lossless.wtf)                      | Official | Failover mirror  |
+| [if-it-runs-ship-it.lol](https://if-it-runs-ship-it.lol/) | Official | Failover mirror  |
 
 ---
 
