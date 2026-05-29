@@ -266,3 +266,9 @@ export class AuthManager {
 }
 
 export const authManager = new AuthManager();
+
+// Compatibility shim for upstream's authApi helper, which expects a bearer token
+// getter. We authenticate via PocketBase, so expose its stored token.
+export function getAuthToken() {
+    return pb.authStore?.token || null;
+}
