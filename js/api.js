@@ -2269,6 +2269,43 @@ export class LosslessAPI {
         return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;
     }
 
+    async enrichArtistsWithPicture(artists, maxRequests = 10) {
+        if (!Array.isArray(artists) || artists.length === 0) return artists;
+
+        const idsToFetch = [];
+        for (const artist of artists) {
+            if (!artist?.picture && artist?.id && !idsToFetch.includes(artist.id)) {
+                idsToFetch.push(artist.id);
+            }
+        }
+
+        if (idsToFetch.length === 0) return artists;
+
+        const limitedIds = idsToFetch.slice(0, maxRequests);
+
+        const pictureMap = new Map();
+        const chunkSize = 5;
+        for (let i = 0; i < limitedIds.length; i += chunkSize) {
+            const chunk = limitedIds.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map((id) => this.getArtist(id, { lightweight: true })));
+            for (let j = 0; j < results.length; j++) {
+                const r = results[j];
+                if (r.status === 'fulfilled' && r.value?.picture) {
+                    pictureMap.set(chunk[j], r.value.picture);
+                }
+            }
+        }
+
+        if (pictureMap.size === 0) return artists;
+
+        return artists.map((artist) => {
+            if (!artist?.picture && artist?.id && pictureMap.has(artist.id)) {
+                return { ...artist, picture: pictureMap.get(artist.id) };
+            }
+            return artist;
+        });
+    }
+
     getArtistPictureUrl(id, size = '320') {
         if (!id) {
             return `https://picsum.photos/seed/${Math.random()}/${size}`;
