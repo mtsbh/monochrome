@@ -143,6 +143,7 @@ export class Player {
                 },
                 mediaSource: {
                     codecSwitchingStrategy: 'smooth',
+                    useSourceElements: false,
                 },
             });
             this.shakaPlayer.getNetworkingEngine().registerRequestFilter((type, request) => {
@@ -408,8 +409,7 @@ export class Player {
                     }
                 }
                 if (titleEl) {
-                    const qualityBadge = createQualityBadgeHTML(track);
-                    titleEl.innerHTML = `${escapeHtml(trackTitle)} ${qualityBadge}`;
+                    this.updateNowPlayingTitle(track);
                 }
                 if (albumEl) {
                     const albumTitle = track.album?.title || '';
@@ -642,6 +642,8 @@ export class Player {
                 this.preloadCache.set(track.id, streamInfo);
                 const streamUrl = streamInfo.url;
 
+                if (streamInfo.playbackType?.includes('cenc')) continue;
+
                 // Warm connection and pre-fetch
                 if (!streamUrl.startsWith('blob:')) {
                     if (streamUrl.includes('.mpd') || streamUrl.includes('.m3u8')) {
@@ -747,7 +749,9 @@ export class Player {
             return false;
         }
 
-        const requiresShaka = !track.isLocal && (streamUrl.startsWith('blob:') || streamUrl.includes('.mpd'));
+        const requiresShaka =
+            !track.isLocal &&
+            (streamInfo.playbackType?.includes('cenc') || streamUrl.startsWith('blob:') || streamUrl.includes('.mpd'));
         if (requiresShaka && (!this.shakaPlayer || this.shakaPlayer.getMediaElement() !== activeElement)) {
             return false;
         }
@@ -778,8 +782,22 @@ export class Player {
 
         if (requiresShaka) {
             const loadTarget = streamInfo.preloadManager || streamUrl;
+            if (streamInfo.playbackType?.includes('cenc')) {
+                this.shakaPlayer.configure({
+                    drm: {
+                        clearKeys: {
+                            [streamInfo.keyId]: streamInfo.decryptionKey,
+                        },
+                    },
+                });
+            } else {
+                this.shakaPlayer.configure({ drm: { clearKeys: {} } });
+            }
+            const shakaMimeType = streamInfo.playbackType?.includes('cenc') ? streamInfo.mimeType || null : null;
             handoffPromise =
-                startTime > 0 ? this.shakaPlayer.load(loadTarget, startTime) : this.shakaPlayer.load(loadTarget);
+                startTime > 0
+                    ? this.shakaPlayer.load(loadTarget, startTime, shakaMimeType)
+                    : this.shakaPlayer.load(loadTarget, null, shakaMimeType);
             this.shakaInitialized = true;
 
             handoffPromise = handoffPromise.then(() => {
@@ -1175,8 +1193,7 @@ export class Player {
                 }
             }
         }
-        document.querySelector('.now-playing-bar .title').innerHTML =
-            `${escapeHtml(trackTitle)} ${createQualityBadgeHTML(track)}`;
+        this.updateNowPlayingTitle(track);
         const albumEl = document.querySelector('.now-playing-bar .album');
         if (albumEl) {
             const albumTitle = track.album?.title || '';
@@ -1380,6 +1397,15 @@ export class Player {
                 if (this.playbackSequence !== currentSequence) return;
 
                 streamUrl = resolvedStreamInfo.url;
+                if (resolvedStreamInfo.provider === 'amazon' && resolvedStreamInfo.quality) {
+                    track.amazonMusicQualitySelected = resolvedStreamInfo.quality;
+                    track.amazonMusicQualityDisplay = resolvedStreamInfo.qualityDisplay;
+                    if (this.currentTrack?.id === track.id) {
+                        this.currentTrack.amazonMusicQualitySelected = resolvedStreamInfo.quality;
+                        this.currentTrack.amazonMusicQualityDisplay = resolvedStreamInfo.qualityDisplay;
+                    }
+                    this.updateNowPlayingTitle(track);
+                }
 
                 if (resolvedStreamInfo.rgInfo) {
                     this.currentRgValues = resolvedStreamInfo.rgInfo;
@@ -1393,7 +1419,14 @@ export class Player {
                 if (this.playbackSequence !== currentSequence) return;
 
                 // Handle playback
-                if (streamUrl && (streamUrl.startsWith('blob:') || streamUrl.includes('.mpd')) && !track.isLocal) {
+                const shouldUseShaka =
+                    streamUrl &&
+                    !track.isLocal &&
+                    (resolvedStreamInfo.playbackType?.includes('cenc') ||
+                        streamUrl.includes('.mpd') ||
+                        (streamUrl.startsWith('blob:') && resolvedStreamInfo.playbackType !== 'direct'));
+
+                if (shouldUseShaka) {
                     // It's likely a DASH manifest URL
                     if (this.shakaPlayer.getMediaElement() !== activeElement) {
                         await this.shakaPlayer.attach(activeElement);
@@ -1401,16 +1434,31 @@ export class Player {
                     }
 
                     const loadTarget = resolvedStreamInfo.preloadManager || streamUrl;
+                    if (resolvedStreamInfo.playbackType?.includes('cenc')) {
+                        this.shakaPlayer.configure({
+                            drm: {
+                                clearKeys: {
+                                    [resolvedStreamInfo.keyId]: resolvedStreamInfo.decryptionKey,
+                                },
+                            },
+                        });
+                    } else {
+                        this.shakaPlayer.configure({ drm: { clearKeys: {} } });
+                    }
+                    const shakaMimeType = resolvedStreamInfo.playbackType?.includes('cenc')
+                        ? resolvedStreamInfo.mimeType || null
+                        : null;
 
                     try {
                         if (startTime > 0) {
-                            await this.shakaPlayer.load(getProxyUrl(loadTarget), startTime);
+                            await this.shakaPlayer.load(getProxyUrl(loadTarget), startTime, shakaMimeType);
                         } else {
-                            await this.shakaPlayer.load(getProxyUrl(loadTarget));
+                            await this.shakaPlayer.load(getProxyUrl(loadTarget), null, shakaMimeType);
                         }
                     } catch (e) {
                         console.error('PreloadManager load Error:', e);
-                        if (loadTarget !== streamUrl) await this.shakaPlayer.load(getProxyUrl(streamUrl));
+                        if (loadTarget !== streamUrl)
+                            await this.shakaPlayer.load(getProxyUrl(streamUrl), null, shakaMimeType);
                         else throw e;
                     }
 
@@ -2207,6 +2255,13 @@ export class Player {
         });
     }
 
+    updateNowPlayingTitle(track = this.currentTrack) {
+        if (!track) return;
+        const titleEl = document.querySelector('.now-playing-bar .title');
+        if (!titleEl) return;
+        titleEl.innerHTML = `${escapeHtml(getTrackTitle(track))} ${createQualityBadgeHTML(track)}`;
+    }
+
     updateAdaptiveQualityBadge() {
         if (!this.currentTrack) return;
 
@@ -2215,6 +2270,10 @@ export class Player {
             if (!titleEl) return;
 
             let badgeEl = titleEl.querySelector('.shaka-quality-badge');
+            if (this.currentTrack.amazonMusicQualitySelected) {
+                if (badgeEl) badgeEl.style.display = 'none';
+                return;
+            }
 
             if (!qualityBadgeSettings.isEnabled()) {
                 if (badgeEl) badgeEl.style.display = 'none';
