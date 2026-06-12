@@ -224,7 +224,11 @@ export class MusicAPI {
                 const result = await this.tidalAPI.getQobuzStreamUrl(isrc, quality);
                 if (result && result.url) return result;
             }
-            throw new Error(`No ISRC registered for Qobuz track ${id}`);
+            // No ISRC cached — play directly by Qobuz track ID
+            const qobuzTrackId = id.slice('qobuz-'.length);
+            const result = await this.tidalAPI.getQobuzStreamUrlByTrackId(qobuzTrackId, quality);
+            if (result && result.url) return result;
+            throw new Error(`Could not stream Qobuz track ${id}: no ISRC and direct fetch failed`);
         }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);

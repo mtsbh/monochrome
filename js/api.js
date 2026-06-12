@@ -1754,6 +1754,44 @@ export class LosslessAPI {
         return null;
     }
 
+    async getQobuzStreamUrlByTrackId(qobuzTrackId, quality = 'LOSSLESS') {
+        let qobuzInstances = [];
+        try {
+            qobuzInstances = await this.settings.getInstances('qobuz');
+        } catch {
+            // ignore
+        }
+
+        if (!qobuzInstances || qobuzInstances.length === 0) return null;
+
+        const qobuzQualityMap = { HI_RES_LOSSLESS: '27', LOSSLESS: '6', HIGH: '5', LOW: '5' };
+        const qobuzQuality = qobuzQualityMap[quality] || '6';
+
+        for (const instance of qobuzInstances) {
+            const rawUrl = typeof instance === 'string' ? instance : instance?.url;
+            if (!rawUrl || typeof rawUrl !== 'string') continue;
+            const baseUrl = rawUrl.replace(/\/+$/, '');
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                const streamRes = await fetch(
+                    `${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`,
+                    { signal: controller.signal }
+                );
+                clearTimeout(timeoutId);
+                if (!streamRes.ok) continue;
+                const streamJson = await streamRes.json();
+                if (streamJson.success && streamJson.data?.url) {
+                    return { url: streamJson.data.url, rgInfo: null };
+                }
+            } catch (e) {
+                console.warn(`Qobuz instance ${baseUrl} failed for track ID ${qobuzTrackId}:`, e);
+                continue;
+            }
+        }
+        return null;
+    }
+
     getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {
         let adaptiveQuality = null;
         try {
@@ -2671,7 +2709,36 @@ export class LosslessAPI {
                 console.warn(`[quality fallback] ${q} failed, trying next...`);
             }
         }
-        if (!lookup) throw lastError || new Error('Could not resolve stream URL');
+        if (!lookup) {
+            // TIDAL proxies all failed — try Amazon Music as fallback
+            if (!this.isAmazonRateLimited()) {
+                try {
+                    const amazonResult = await this.getAmazonMusicStreamUrl(id, quality, {
+                        preferAdaptiveAuto: true,
+                    });
+                    if (amazonResult?.url) {
+                        const result = {
+                            url: amazonResult.url,
+                            sourceUrl: amazonResult.sourceUrl || amazonResult.url,
+                            rgInfo: amazonResult.rgInfo,
+                            provider: amazonResult.provider,
+                            playbackType: amazonResult.playbackType,
+                            quality: amazonResult.quality,
+                            qualityDisplay: amazonResult.qualityDisplay,
+                            decryptionKey: amazonResult.decryptionKey,
+                            keyId: amazonResult.keyId,
+                            mimeType: amazonResult.mimeType,
+                            mediaMimeType: amazonResult.mediaMimeType,
+                        };
+                        this.streamCache.set(cacheKey, result);
+                        return result;
+                    }
+                } catch (amazonErr) {
+                    console.warn('Amazon Music fallback also failed:', amazonErr);
+                }
+            }
+            throw lastError || new Error('Could not resolve stream URL');
+        }
 
         if (lookup.originalTrackUrl) {
             streamUrl = lookup.originalTrackUrl;
