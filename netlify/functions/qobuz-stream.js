@@ -28,13 +28,10 @@ const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 
 let _appCache = null; // { appId, secrets: [...], ts }
 let _tokenCache = null; // user_auth_token
-let _goodSecret = null; // last secret that successfully signed a request
+let _goodPair = null; // last { appId, secret } that signed successfully
 
 // --- Derive app_id + candidate app_secrets from the Qobuz web bundle ---
-async function getApp() {
-    if (process.env.QOBUZ_APP_ID && process.env.QOBUZ_APP_SECRET) {
-        return { appId: process.env.QOBUZ_APP_ID, secrets: [process.env.QOBUZ_APP_SECRET] };
-    }
+async function getBundleApp() {
     if (_appCache && Date.now() - _appCache.ts < APP_TTL_MS) return _appCache;
 
     const loginHtml = await (await fetch(`${PLAY_ORIGIN}/login`, { headers: { 'User-Agent': USER_AGENT } })).text();
@@ -73,6 +70,29 @@ async function getApp() {
     return _appCache;
 }
 
+// Candidate { appId, secret } pairs to sign with. The bundle-scraped pairs are
+// guaranteed self-consistent and tried FIRST; an env QOBUZ_APP_ID+APP_SECRET is
+// added only as an extra fallback (additive, never exclusive) so a stale/
+// mismatched env secret can't break signing. Falls back to env if the bundle
+// scrape itself fails.
+async function getCandidatePairs() {
+    const pairs = [];
+    let bundleAppId = null;
+    try {
+        const bundle = await getBundleApp();
+        bundleAppId = bundle.appId;
+        for (const secret of bundle.secrets) pairs.push({ appId: bundle.appId, secret });
+    } catch {
+        // bundle scrape failed — rely on env pair below if present
+    }
+    if (process.env.QOBUZ_APP_ID && process.env.QOBUZ_APP_SECRET) {
+        pairs.push({ appId: process.env.QOBUZ_APP_ID, secret: process.env.QOBUZ_APP_SECRET });
+        if (!bundleAppId) bundleAppId = process.env.QOBUZ_APP_ID;
+    }
+    if (pairs.length === 0) throw new Error('No Qobuz app credentials (bundle scrape failed and no env vars set)');
+    return { bundleAppId, pairs };
+}
+
 // --- Qobuz user auth token (same logic as qobuz-album.js) ---
 async function getToken(appId) {
     if (process.env.QOBUZ_USER_AUTH_TOKEN) return process.env.QOBUZ_USER_AUTH_TOKEN;
@@ -98,15 +118,15 @@ function qobuzHeaders(appId, token) {
 
 // --- /api/get-music?q=<isrc> : search by ISRC, return client-expected shape ---
 async function handleSearch(isrc) {
-    const app = await getApp();
-    const token = await getToken(app.appId);
+    const { bundleAppId } = await getCandidatePairs();
+    const token = await getToken(bundleAppId);
     const url = new URL(`${QOBUZ_BASE}/catalog/search`);
     url.searchParams.set('query', isrc);
     url.searchParams.set('type', 'tracks');
     url.searchParams.set('limit', '25');
-    url.searchParams.set('app_id', app.appId);
+    url.searchParams.set('app_id', bundleAppId);
 
-    const res = await fetch(url.toString(), { headers: qobuzHeaders(app.appId, token) });
+    const res = await fetch(url.toString(), { headers: qobuzHeaders(bundleAppId, token) });
     if (!res.ok) return json({ error: `Qobuz search ${res.status}` }, res.status);
     const data = await res.json();
     const items = data?.tracks?.items || [];
@@ -116,17 +136,18 @@ async function handleSearch(isrc) {
 
 // --- /api/download-music?track_id=<id>&quality=<fmt> : signed getFileUrl ---
 async function handleDownload(trackId, formatId) {
-    const app = await getApp();
-    const token = await getToken(app.appId);
+    const { bundleAppId, pairs } = await getCandidatePairs();
+    const token = await getToken(bundleAppId);
 
-    // try the known-good secret first, then the rest
-    const ordered = _goodSecret ? [_goodSecret, ...app.secrets.filter((s) => s !== _goodSecret)] : app.secrets;
+    // try the last known-good pair first, then the rest
+    const samePair = (a, b) => a && b && a.appId === b.appId && a.secret === b.secret;
+    const ordered = _goodPair ? [_goodPair, ...pairs.filter((p) => !samePair(p, _goodPair))] : pairs;
 
     let lastBody = null;
     let lastStatus = 0;
-    for (const secret of ordered) {
+    for (const pair of ordered) {
         const ts = Math.floor(Date.now() / 1000);
-        const sig = md5(`trackgetFileUrlformat_id${formatId}intentstreamtrack_id${trackId}${ts}${secret}`);
+        const sig = md5(`trackgetFileUrlformat_id${formatId}intentstreamtrack_id${trackId}${ts}${pair.secret}`);
         const url = new URL(`${QOBUZ_BASE}/track/getFileUrl`);
         url.searchParams.set('request_ts', String(ts));
         url.searchParams.set('request_sig', sig);
@@ -134,16 +155,16 @@ async function handleDownload(trackId, formatId) {
         url.searchParams.set('format_id', String(formatId));
         url.searchParams.set('intent', 'stream');
 
-        const res = await fetch(url.toString(), { headers: qobuzHeaders(app.appId, token) });
+        const res = await fetch(url.toString(), { headers: qobuzHeaders(pair.appId, token) });
         const body = await res.json().catch(() => ({}));
         lastStatus = res.status;
         lastBody = body;
 
-        // Wrong secret -> 400 "Invalid Request Signature": try the next candidate.
-        if (res.status === 400 && /request_sig/i.test(body?.message || '')) continue;
+        // Wrong app_id/secret pair -> 400: try the next candidate.
+        if (res.status === 400 && /(request_sig|app_id)/i.test(body?.message || '')) continue;
 
         // Correct signature.
-        _goodSecret = secret;
+        _goodPair = pair;
         if (res.ok && body?.url) {
             return json({ success: true, data: { url: body.url, sample: !!body.sample, format_id: body.format_id } });
         }
