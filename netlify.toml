@@ -23,6 +23,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/get-music"
+  to = "/.netlify/functions/qobuz-stream"
+  status = 200
+
+[[redirects]]
+  from = "/api/download-music"
+  to = "/.netlify/functions/qobuz-stream"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

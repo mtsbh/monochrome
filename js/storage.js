@@ -166,6 +166,17 @@ export const apiSettings = {
             ...defaultUrls,
         ];
 
+        if (type === 'qobuz') {
+            // Always prefer the self-hosted Qobuz proxy (same origin) — see
+            // netlify/functions/qobuz-stream.js. Falls through to the other
+            // instances below if the function is unavailable.
+            const selfOrigin =
+                typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null;
+            if (selfOrigin && !combined.some((i) => (typeof i === 'string' ? i : i?.url) === selfOrigin)) {
+                combined.unshift({ url: selfOrigin, version: 'self', isSelf: true });
+            }
+        }
+
         if (combined.length === 0) return [];
 
         return combined;
