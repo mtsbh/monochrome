@@ -2927,15 +2927,16 @@ export class LosslessAPI {
             try {
                 const qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
                 if (qobuzResult && qobuzResult.url) {
-                    qobuzStreamUrl = qobuzResult.url;
-                    qobuzRgInfo = qobuzResult.rgInfo;
+                    externalStreamUrl = qobuzResult.url;
+                    externalProvider = 'qobuz';
+                    externalRgInfo = qobuzResult.rgInfo;
                     lookup = {
                         info: {
                             audioQuality: cleanQuality,
-                            trackReplayGain: qobuzRgInfo?.trackReplayGain ?? 0,
-                            trackPeakAmplitude: qobuzRgInfo?.trackPeakAmplitude ?? 1,
-                            albumReplayGain: qobuzRgInfo?.albumReplayGain ?? 0,
-                            albumPeakAmplitude: qobuzRgInfo?.albumPeakAmplitude ?? 1,
+                            trackReplayGain: externalRgInfo?.trackReplayGain ?? 0,
+                            trackPeakAmplitude: externalRgInfo?.trackPeakAmplitude ?? 1,
+                            albumReplayGain: externalRgInfo?.albumReplayGain ?? 0,
+                            albumPeakAmplitude: externalRgInfo?.albumPeakAmplitude ?? 1,
                         },
                     };
                 }
