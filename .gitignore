@@ -28,3 +28,5 @@ package-lock.json
 # Q-DL Files
 qobuz-api
 Qobuz-DL
+Caddyfile
+dev-dist

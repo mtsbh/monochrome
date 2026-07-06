@@ -17,7 +17,6 @@ import {
     amazonMusicSettings,
     deezerFallbackSettings,
 } from './storage.js';
-import { decryptDeezerStream } from './deezer-decrypt.js';
 import { APICache } from './cache.js';
 import { DashDownloader } from './dash-downloader.ts';
 import { HlsDownloader } from './hls-downloader.js';
@@ -29,7 +28,7 @@ import { DownloadProgress } from './progressEvents.js';
 import { resolveDownloadTotalBytes } from './downloadProgressUtils.js';
 import { readableStreamIterator } from './readableStreamIterator.js';
 import { HiFiClient, TidalResponse } from './HiFi.ts';
-import { isIos, isSafari, isChrome } from './platform-detection.js';
+import { isIos, isSafari, isChrome, canUseNativeAmazonCenc } from './platform-detection.js';
 import {
     TrackAlbum,
     EnrichedAlbum,
@@ -563,6 +562,16 @@ export class LosslessAPI {
             const albumsData = extractSection('albums');
             const playlistsData = extractSection('playlists');
             const videosData = extractSection('videos');
+
+            const preparedTracks = tracksData.items.map((t) => this.prepareTrack(t));
+            const preparedArtists = artistsData.items.map((a) => this.prepareArtist(a));
+
+            const [enrichedTracks, enrichedArtists] = await Promise.all([
+                this.enrichTracksWithAlbumCover(preparedTracks),
+                options.enrichArtists === false
+                    ? Promise.resolve(preparedArtists)
+                    : this.enrichArtistsWithPicture(preparedArtists),
+            ]);
 
             const results = {
                 tracks: {
@@ -1690,6 +1699,7 @@ export class LosslessAPI {
     }
 
     async getQobuzStreamUrl(isrc, quality = 'LOSSLESS') {
+        return null; // Temporarily disabled
         let qobuzInstances = [];
         try {
             qobuzInstances = await this.settings.getInstances('qobuz');
@@ -1709,9 +1719,12 @@ export class LosslessAPI {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-                const trackRes = await fetch(`${baseUrl}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`, {
-                    signal: controller.signal,
-                });
+                const trackRes = await fetch(
+                    getProxyUrl(`${baseUrl}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`),
+                    {
+                        signal: controller.signal,
+                    }
+                );
                 clearTimeout(timeoutId);
                 if (!trackRes.ok) continue;
                 const trackJson = await trackRes.json();
@@ -1816,66 +1829,18 @@ export class LosslessAPI {
         const baseUrl = deezerFallbackSettings.getApiBaseUrl().replace(/\/+$/, '');
         if (!baseUrl) return null;
         const format = this.getDeezerStreamFormat(quality);
+        const url = `${baseUrl}/stream/?isrc=${encodeURIComponent(isrc)}&format=${encodeURIComponent(format)}`;
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 12000);
-            const res = await fetch(
-                `${baseUrl}/track/?isrc=${encodeURIComponent(isrc)}&format=${encodeURIComponent(format)}`,
-                { signal: controller.signal }
-            );
+            const res = await fetch(getProxyUrl(url), { method: 'HEAD', signal: controller.signal });
             clearTimeout(timeoutId);
-            if (!res.ok) return null;
-            const data = await res.json();
-            if (!data?.url || !data?.blowfishKey) return null;
-            return {
-                url: data.audioUrl,
-                blowfishKey: data.blowfishKey,
-                format: data.format || format,
-                encryption: data.encryption || 'BF_CBC_STRIPE',
-                provider: 'deezer',
-                rgInfo: null,
-            };
+            if (!res.ok && res.status !== 405 && res.status !== 501) return null;
         } catch (e) {
             console.warn(`Deezer fallback failed for ISRC ${isrc}:`, e);
             return null;
         }
-    }
-
-    async fetchAndDecryptDeezer(deezerResult, { onProgress, signal } = {}) {
-        const isMp3 = String(deezerResult.format || '')
-            .toUpperCase()
-            .startsWith('MP3');
-        const mime = isMp3 ? 'audio/mpeg' : 'audio/flac';
-
-        const readAll = async (response) => {
-            const contentLength = response.headers.get('Content-Length');
-            const totalBytes = contentLength ? parseInt(contentLength, 10) : undefined;
-            if (!response.body) {
-                const buf = new Uint8Array(await response.arrayBuffer());
-                onProgress?.(new DownloadProgress(buf.length, buf.length));
-                return buf;
-            }
-            const chunks = [];
-            let received = 0;
-            for await (const chunk of readableStreamIterator(response.body)) {
-                chunks.push(chunk);
-                received += chunk.byteLength;
-                onProgress?.(new DownloadProgress(received, totalBytes));
-            }
-            const bytes = new Uint8Array(received);
-            let pos = 0;
-            for (const c of chunks) {
-                bytes.set(c, pos);
-                pos += c.byteLength;
-            }
-            return bytes;
-        };
-
-        const response = await fetch(deezerResult.url, { cache: 'no-store', signal });
-        if (!response.ok) throw new Error(`Deezer CDN fetch failed: ${response.status}`);
-        const bytes = await readAll(response);
-        const decrypted = decryptDeezerStream(bytes, deezerResult.blowfishKey);
-        return new Blob([decrypted], { type: mime });
+        return { url, format, provider: 'deezer', rgInfo: null };
     }
 
     getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {
@@ -1933,8 +1898,8 @@ export class LosslessAPI {
     }
 
     clearAmazonTurnstileJwt() {
-        this._turnstileCachedJwt = null;
-        this._turnstileCachedExpiry = 0;
+        localStorage.removeItem('amazon_turnstile_jwt');
+        localStorage.removeItem('amazon_turnstile_expiry');
     }
 
     handleAmazonApiStatus(status, endpointName = 'Amazon Music API') {
@@ -1951,9 +1916,20 @@ export class LosslessAPI {
 
     getAmazonCodecString(codec) {
         const normalized = String(codec || '').toLowerCase();
-        if (normalized === 'flac') return 'flac';
-        if (normalized === 'opus') return 'opus';
+        if (normalized === 'flac') return 'fLaC';
+        if (normalized === 'opus') return 'Opus';
         return normalized;
+    }
+
+    getAmazonDecryptionKey(data) {
+        return (
+            data?.decryption_key ||
+            data?.decryptionKey ||
+            data?.decryption?.key ||
+            data?.drm?.decryption_key ||
+            data?.drm?.decryptionKey ||
+            null
+        );
     }
 
     getAmazonMimeType(qualityInfo = null) {
@@ -2039,6 +2015,7 @@ export class LosslessAPI {
             panel.style.color = 'var(--foreground)';
             panel.style.boxShadow = '0 12px 32px rgba(0, 0, 0, 0.28)';
             panel.style.fontSize = '0.8rem';
+            panel.style.display = 'none';
             panel.innerHTML = `
                 <div style="font-weight: 600; margin-bottom: 0.25rem;">Cloudflare verification</div>
                 <div style="color: var(--muted-foreground); margin-bottom: 0.75rem; line-height: 1.35;">
@@ -2061,10 +2038,22 @@ export class LosslessAPI {
         container.innerHTML = '';
         const turnstile = await this.loadTurnstile();
 
+        const playBtns = document.querySelectorAll('.play-pause-btn, #fs-play-pause-btn');
+        const oldHtmls = new Map();
+        playBtns.forEach((btn) => {
+            oldHtmls.set(btn, btn.innerHTML);
+            btn.innerHTML = `<svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
+        });
+
         return await new Promise((resolve, reject) => {
             let timeoutId;
             let widgetId;
             const cleanup = () => {
+                playBtns.forEach((btn) => {
+                    if (oldHtmls.has(btn)) {
+                        btn.innerHTML = oldHtmls.get(btn);
+                    }
+                });
                 clearTimeout(timeoutId);
                 if (widgetId && turnstile.remove) {
                     try {
@@ -2081,10 +2070,13 @@ export class LosslessAPI {
 
             widgetId = turnstile.render(container, {
                 sitekey: siteKey,
-                size: 'normal',
+                size: 'invisible',
                 execution: 'execute',
-                appearance: 'interaction-only',
                 theme: 'auto',
+                'before-interactive-callback': () => {
+                    const p = document.getElementById('amazon-music-turnstile-panel');
+                    if (p) p.style.display = 'block';
+                },
                 callback: (token) => {
                     cleanup();
                     resolve(token);
@@ -2104,45 +2096,62 @@ export class LosslessAPI {
     }
 
     async getTurnstileJwt({ forceRefresh = false } = {}) {
-        if (!forceRefresh && this._turnstileCachedJwt && Date.now() < this._turnstileCachedExpiry) {
-            return this._turnstileCachedJwt;
-        }
-        if (forceRefresh) {
-            this.clearAmazonTurnstileJwt();
-        }
-
-        const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');
-        let response = null;
-
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const turnstileResponse = await this.getTurnstileResponse();
-            if (!turnstileResponse) return null;
-
-            response = await fetch(`${apiBaseUrl}/api/auth/turnstile`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
-            });
-
-            this.handleAmazonApiStatus(response.status, 'Amazon Music Turnstile auth');
-            if ((response.status === 401 || response.status === 428) && attempt === 0) {
-                this.clearAmazonTurnstileJwt();
-                continue;
+        if (!forceRefresh) {
+            const cachedJwt = localStorage.getItem('amazon_turnstile_jwt');
+            const cachedExpiry = localStorage.getItem('amazon_turnstile_expiry');
+            if (cachedJwt && cachedExpiry && Date.now() < parseInt(cachedExpiry, 10)) {
+                return cachedJwt;
             }
-            break;
+        }
+        if (this._turnstileJwtPromise && !forceRefresh) {
+            return this._turnstileJwtPromise;
         }
 
-        if (!response.ok) {
-            throw new Error(`Failed to exchange Turnstile token: ${response.status}`);
-        }
+        this._turnstileJwtPromise = (async () => {
+            if (forceRefresh) {
+                this.clearAmazonTurnstileJwt();
+            }
 
-        const data = await response.json();
-        this._turnstileCachedJwt = data.access_token;
-        this._turnstileCachedExpiry = Date.now() + (data.expires_in - 60) * 1000;
+            const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');
+            let response = null;
 
-        return data.access_token;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const turnstileResponse = await this.getTurnstileResponse();
+                if (!turnstileResponse) return null;
+
+                response = await fetch(`${apiBaseUrl}/api/auth/turnstile`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
+                });
+
+                this.handleAmazonApiStatus(response.status, 'Amazon Music Turnstile auth');
+                if ((response.status === 401 || response.status === 428) && attempt === 0) {
+                    this.clearAmazonTurnstileJwt();
+                    continue;
+                }
+                break;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Failed to exchange Turnstile token: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const jwt = data.access_token;
+            const expiry = Date.now() + 60 * 60 * 1000;
+
+            localStorage.setItem('amazon_turnstile_jwt', jwt);
+            localStorage.setItem('amazon_turnstile_expiry', expiry.toString());
+
+            return jwt;
+        })().finally(() => {
+            this._turnstileJwtPromise = null;
+        });
+
+        return this._turnstileJwtPromise;
     }
 
     bytesToHex(bytes) {
@@ -2443,10 +2452,11 @@ export class LosslessAPI {
     }
 
     getAmazonTrackArtist(track) {
+        if (typeof track?.artist === 'string') return track.artist.trim();
         if (track?.artist?.name) return String(track.artist.name).trim();
         if (Array.isArray(track?.artists) && track.artists.length > 0) {
             return track.artists
-                .map((artist) => (typeof artist === 'string' ? artist : artist?.name))
+                .map((artist) => (typeof artist === 'string' ? artist : artist?.name || artist?.title))
                 .filter(Boolean)
                 .join(' ')
                 .trim();
@@ -2455,7 +2465,14 @@ export class LosslessAPI {
     }
 
     getAmazonTrackAlbum(track) {
+        if (typeof track?.album === 'string') return track.album.trim();
         return String(track?.album?.title || track?.album?.name || '').trim();
+    }
+
+    getAmazonTrackDuration(track) {
+        const duration = Number(track?.duration);
+        if (!Number.isFinite(duration) || duration <= 0) return null;
+        return duration > 10000 ? duration / 1000 : duration;
     }
 
     normalizeAmazonSearchText(value) {
@@ -2466,7 +2483,7 @@ export class LosslessAPI {
             .replace(/\b(explicit|clean|remaster(?:ed)?|deluxe|bonus track|radio edit)\b/g, ' ')
             .replace(/[()[\]{}]/g, ' ')
             .replace(/&/g, ' and ')
-            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
             .trim()
             .replace(/\s+/g, ' ');
     }
@@ -2506,9 +2523,20 @@ export class LosslessAPI {
 
     scoreAmazonSearchResult(track, candidate) {
         const titleScore = this.scoreAmazonTextMatch(this.getAmazonTrackTitle(track), candidate?.title, 45);
-        const artistScore = this.scoreAmazonTextMatch(this.getAmazonTrackArtist(track), candidate?.artist?.name, 25);
-        const albumScore = this.scoreAmazonTextMatch(this.getAmazonTrackAlbum(track), candidate?.album?.name, 15);
-        const durationScore = this.scoreAmazonDurationMatch(track?.duration, candidate?.duration);
+        const artistScore = this.scoreAmazonTextMatch(
+            this.getAmazonTrackArtist(track),
+            this.getAmazonTrackArtist(candidate),
+            25
+        );
+        const albumScore = this.scoreAmazonTextMatch(
+            this.getAmazonTrackAlbum(track),
+            this.getAmazonTrackAlbum(candidate),
+            15
+        );
+        const durationScore = this.scoreAmazonDurationMatch(
+            this.getAmazonTrackDuration(track),
+            this.getAmazonTrackDuration(candidate)
+        );
         const score = titleScore + artistScore + albumScore + durationScore;
 
         return {
@@ -2533,14 +2561,17 @@ export class LosslessAPI {
 
         const strongTitle = best.titleScore >= 35;
         const strongArtist = best.artistScore >= 19;
-        const closeDuration = !track?.duration || !best.candidate?.duration || best.durationScore >= 8;
+        const closeDuration =
+            !this.getAmazonTrackDuration(track) ||
+            !this.getAmazonTrackDuration(best.candidate) ||
+            best.durationScore >= 8;
         if (best.score < 62 || !strongTitle || !strongArtist || !closeDuration) {
-            console.warn('Amazon Music search had no confident match:', {
+            console.debug('Amazon Music search had no confident match:', {
                 track: {
                     title: this.getAmazonTrackTitle(track),
                     artist: this.getAmazonTrackArtist(track),
                     album: this.getAmazonTrackAlbum(track),
-                    duration: track?.duration,
+                    duration: this.getAmazonTrackDuration(track),
                 },
                 best,
             });
@@ -2556,7 +2587,7 @@ export class LosslessAPI {
         const album = this.getAmazonTrackAlbum(track);
         const cacheKey =
             title || artist
-                ? `search:${this.normalizeAmazonSearchText(`${title} ${artist} ${album}`)}:${track?.duration || 0}`
+                ? `search:v3:${this.normalizeAmazonSearchText(`${title} ${artist} ${album}`)}:${this.getAmazonTrackDuration(track) || 0}`
                 : `id:${tidalTrackId}`;
         if (this.amazonAsinCache.has(cacheKey)) {
             return this.amazonAsinCache.get(cacheKey);
@@ -2586,7 +2617,7 @@ export class LosslessAPI {
         const match = this.getBestAmazonSearchResult(track, data?.data);
         const asin = match?.id;
         if (!asin) {
-            throw new Error('Amazon Music search returned no confident ASIN match');
+            return null;
         }
 
         this.amazonAsinCache.set(cacheKey, asin);
@@ -2630,7 +2661,20 @@ export class LosslessAPI {
 
             const track =
                 options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);
+
+            let turnstileJwtPromise = null;
+            const bypassToken = amazonMusicSettings.getTurnstileBypassToken().trim();
+            if (!bypassToken) {
+                turnstileJwtPromise = this.getTurnstileJwt().catch(() => null);
+            }
+
             const asin = await this.getAmazonAsin(tidalTrackId, track);
+            if (!asin) return null;
+
+            if (turnstileJwtPromise) {
+                await turnstileJwtPromise;
+            }
+
             const amazonQuality = this.getAmazonMusicQuality(quality, options);
             const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');
 
@@ -2650,12 +2694,13 @@ export class LosslessAPI {
                 throw new Error('Amazon Music API returned no stream URL');
             }
 
+            const decryptionKey = this.getAmazonDecryptionKey(data);
             const selectedQualityInfo = this.getAmazonSelectedQualityInfo(data);
             const mp4Info = await this.getAmazonCencMp4Info(data.stream_url).catch((e) => {
                 console.warn('Failed to get Amazon MP4 info:', e);
                 return null;
             });
-            if (data.decryption_key && !mp4Info?.keyId) {
+            if (decryptionKey && !mp4Info?.keyId && !options.allowCencWithoutKeyId) {
                 throw new Error('Could not find Amazon Music CENC key ID');
             }
             const manifestUrl = mp4Info
@@ -2670,7 +2715,7 @@ export class LosslessAPI {
                 playbackType: mp4Info ? (mp4Info.keyId ? 'dash-cenc' : 'dash') : 'direct',
                 quality: data.quality_selected || amazonQuality,
                 qualityDisplay: this.getAmazonQualityDisplay(data, selectedQualityInfo),
-                decryptionKey: data.decryption_key || null,
+                decryptionKey,
                 keyId: mp4Info?.keyId || null,
                 mimeType: mp4Info ? 'application/dash+xml' : this.getAmazonMimeType(selectedQualityInfo),
                 mediaMimeType: this.getAmazonMimeType(selectedQualityInfo),
@@ -2847,10 +2892,159 @@ export class LosslessAPI {
             };
         }
 
-        const result = { url: streamUrl, rgInfo: manifestRgInfo };
-        this.streamCache.set(cacheKey, result);
+        if (amazonMusicSettings?.isEnabled() && !amazonMusicSettings.getTurnstileBypassToken().trim()) {
+            this.getTurnstileJwt().catch(() => null);
+        }
 
-        return result;
+        const track = await this.getTrackMetadata(id);
+
+        const canPlayAmazonCenc = canUseNativeAmazonCenc;
+        const needsProxyDecryption = !canPlayAmazonCenc;
+
+        let actualQuality = quality;
+
+        const isAacQuality = actualQuality === 'HIGH' || actualQuality === 'SD_HIGH' || actualQuality === 'SD_LOW';
+        const targetCodec = isAacQuality ? 'mp4a' : isSafari ? 'flac-hls' : 'flac';
+
+        let amazonResult = null;
+        let qobuzResult = null;
+        let deezerResult = null;
+
+        if (track?.isrc) {
+            qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+        }
+        if (!qobuzResult?.url) {
+            amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
+                preferAdaptiveAuto: true,
+                track,
+                allowCencWithoutKeyId: needsProxyDecryption,
+            });
+            if (!amazonResult?.url && track?.isrc) {
+                deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
+            }
+        }
+
+        if (amazonResult?.url) {
+            let streamUrl = amazonResult.url;
+            let playbackType = amazonResult.playbackType;
+            let provider = amazonResult.provider;
+            const shouldProxyAmazon =
+                needsProxyDecryption && !!amazonResult.decryptionKey && !!(amazonResult.sourceUrl || amazonResult.url);
+
+            console.log('[Amazon SW Decrypter] stream decision', {
+                needsProxyDecryption,
+                shouldProxyAmazon,
+                hasDecryptionKey: !!amazonResult.decryptionKey,
+                hasKeyId: !!amazonResult.keyId,
+                playbackType: amazonResult.playbackType,
+                urlHost: (() => {
+                    try {
+                        return new URL(amazonResult.sourceUrl || amazonResult.url).host;
+                    } catch {
+                        return null;
+                    }
+                })(),
+            });
+
+            // Route CENC streams through our custom SW decrypter on Safari/Firefox to bypass broken EME
+            if (shouldProxyAmazon) {
+                streamUrl = `${window.location.protocol}//${window.location.host}/api/decrypt-stream?url=${encodeURIComponent(amazonResult.sourceUrl || amazonResult.url)}&key=${amazonResult.decryptionKey}&codec=${targetCodec}`;
+                playbackType = []; // Treat as normal unencrypted stream
+                console.log('Routing Amazon Music CENC stream through SW Decrypter');
+            } else if (amazonResult.playbackType?.includes('cenc') && !canPlayAmazonCenc) {
+                if (amazonResult.decryptionKey) {
+                    const params = new URLSearchParams();
+                    // Pass the original source URL (the actual MP4 file) instead of the DASH manifest
+                    params.set('url', amazonResult.sourceUrl || amazonResult.url);
+                    params.set('key', amazonResult.decryptionKey);
+                    params.set('codec', targetCodec);
+                    streamUrl = `/api/decrypt-stream?${params.toString()}`;
+                    playbackType = []; // Treat as normal unencrypted stream
+                    console.log('Routing Amazon Music CENC stream through SW Decrypter');
+                } else {
+                    console.warn('Skipping Amazon Music CENC stream: decryption key missing for SW Decrypter.');
+                    amazonResult = null;
+                }
+            }
+
+            if (amazonResult) {
+                const result = {
+                    url: streamUrl,
+                    sourceUrl: amazonResult.sourceUrl || streamUrl,
+                    rgInfo: amazonResult.rgInfo,
+                    provider: provider,
+                    playbackType: playbackType,
+                    quality: amazonResult.quality,
+                    qualityDisplay: amazonResult.qualityDisplay,
+                    decryptionKey: amazonResult.decryptionKey,
+                    keyId: amazonResult.keyId,
+                    mimeType: amazonResult.mimeType,
+                    mediaMimeType: amazonResult.mediaMimeType,
+                };
+                this.streamCache.set(cacheKey, result);
+                return result;
+            }
+        }
+
+        if (qobuzResult?.url) {
+            const result = {
+                url: qobuzResult.url,
+                rgInfo: qobuzResult.rgInfo || {
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+                provider: 'qobuz',
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
+        if (deezerResult?.url) {
+            const result = {
+                url: deezerResult.url,
+                rgInfo: {
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+                provider: 'deezer',
+                deezerFormat: deezerResult.format,
+                deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
+        if (track?.isrc && !qobuzResult && !deezerResult && !amazonResult) {
+            // Fallback just in case they weren't fetched
+            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
+            if (deezerResult?.url) {
+                const result = {
+                    url: deezerResult.url,
+                    rgInfo: {
+                        trackReplayGain: 0,
+                        trackPeakAmplitude: 1,
+                        albumReplayGain: 0,
+                        albumPeakAmplitude: 1,
+                    },
+                    provider: 'deezer',
+                    deezerFormat: deezerResult.format,
+                    deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',
+                };
+                this.streamCache.set(cacheKey, result);
+                return result;
+            }
+        }
+
+        notifyAudioSourceMissing();
+        throw new Error(
+            track?.isrc
+                ? 'Could not resolve stream URL from Amazon Music, Qobuz, or Deezer'
+                : 'Could not resolve stream URL: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'
+        );
     }
 
     async getVideoStreamUrl(id) {
@@ -2906,7 +3100,13 @@ export class LosslessAPI {
         }
 
         const id = input?.id || input;
-        const track = typeof input === 'object' && input.isrc ? input : await this.getTrackMetadata(id);
+        const inputTrack = typeof input === 'object' ? input : null;
+        const metadataTrack = id ? await this.getTrackMetadata(id).catch(() => null) : null;
+        const track = metadataTrack
+            ? this.prepareTrack({ ...(inputTrack || {}), ...metadataTrack })
+            : inputTrack?.isrc
+              ? inputTrack
+              : await this.getTrackMetadata(id);
         const isVideo = track?.type?.toLowerCase().includes('video');
         const cleanQuality = isCustomFormat(downloadQuality) ? 'LOSSLESS' : downloadQuality;
 
@@ -2920,16 +3120,61 @@ export class LosslessAPI {
         let externalMimeType = null;
         let externalMediaMimeType = null;
         let externalSourceUrl = null;
-        let deezerBlowfishKey = null;
-        let deezerFormat = null;
 
-        if (!isVideo && track.isrc) {
-            try {
-                const qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
-                if (qobuzResult && qobuzResult.url) {
-                    externalStreamUrl = qobuzResult.url;
-                    externalProvider = 'qobuz';
-                    externalRgInfo = qobuzResult.rgInfo;
+        if (isVideo) {
+            lookup = await this.getVideo(id);
+        } else if (devModeSettings.isEnabled()) {
+            lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+        } else {
+            let amazonResult = null;
+            let qobuzResult = null;
+            let deezerResult = null;
+            const getAmazonForDownload = async () => {
+                try {
+                    return await this.getAmazonMusicStreamUrl(id, cleanQuality, { track });
+                } catch (error) {
+                    console.debug('Amazon Music stream lookup failed during download enrichment:', error);
+                    return null;
+                }
+            };
+
+            if (track?.isrc) {
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
+            }
+            if (!qobuzResult?.url) {
+                amazonResult = await getAmazonForDownload();
+                if (!amazonResult?.url && track?.isrc) {
+                    deezerResult = await this.getDeezerStreamUrl(track.isrc, cleanQuality);
+                }
+            }
+
+            const externalResult = qobuzResult?.url ? qobuzResult : amazonResult?.url ? amazonResult : deezerResult;
+            if (externalResult?.url) {
+                externalStreamUrl = externalResult.url;
+                externalRgInfo = externalResult.rgInfo;
+                externalStreamType = externalResult.playbackType || null;
+                externalProvider =
+                    externalResult.provider || (qobuzResult?.url ? 'qobuz' : amazonResult?.url ? 'amazon' : 'deezer');
+                externalDecryptionKey = externalResult.decryptionKey || null;
+                externalKeyId = externalResult.keyId || null;
+                externalMimeType = externalResult.mimeType || null;
+                externalMediaMimeType = externalResult.mediaMimeType || externalMimeType;
+                externalSourceUrl = externalResult.sourceUrl || externalStreamUrl;
+                lookup = {
+                    info: {
+                        audioQuality: cleanQuality,
+                        trackReplayGain: externalRgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: externalRgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: externalRgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: externalRgInfo?.albumPeakAmplitude ?? 1,
+                    },
+                };
+            } else {
+                deezerResult = track?.isrc ? await this.getDeezerStreamUrl(track.isrc, 'LOSSLESS') : null;
+                if (deezerResult?.url) {
+                    externalProvider = 'deezer';
+                    externalStreamUrl = deezerResult.url;
+                    externalSourceUrl = deezerResult.url;
                     lookup = {
                         info: {
                             audioQuality: cleanQuality,
@@ -2940,8 +3185,6 @@ export class LosslessAPI {
                         },
                     };
                 }
-            } catch (e) {
-                console.warn('ISRC matching failed in enrichTrack:', e);
             }
         }
 
@@ -3016,10 +3259,6 @@ export class LosslessAPI {
         }
         if (externalProvider === 'amazon') {
             result.amazonMusicStreamUrl = externalSourceUrl || externalStreamUrl;
-        }
-        if (externalProvider === 'deezer') {
-            result.deezerBlowfishKey = deezerBlowfishKey;
-            result.deezerFormat = deezerFormat;
         }
         return result;
     }
@@ -3154,15 +3393,6 @@ export class LosslessAPI {
                     onProgress,
                     signal: options.signal,
                 });
-            } else if (enriched.externalProvider === 'deezer') {
-                blob = await this.fetchAndDecryptDeezer(
-                    {
-                        url: streamUrl,
-                        blowfishKey: enriched.deezerBlowfishKey,
-                        format: enriched.deezerFormat,
-                    },
-                    { onProgress, signal: options.signal }
-                );
             } else if (streamUrl.startsWith('blob:')) {
                 try {
                     const downloader = new DashDownloader();

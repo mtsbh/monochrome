@@ -22,7 +22,7 @@ import {
     contentBlockingSettings,
 } from './storage.js';
 import { audioContextManager } from './audio-context.js';
-import { isIos, isSafari } from './platform-detection.js';
+import { isIos, isSafari, canUseNativeAmazonCenc } from './platform-detection.js';
 import { db } from './db.js';
 import { getProxyUrl } from './proxy-utils.js';
 
@@ -104,28 +104,83 @@ export class Player {
             });
         }
 
-        const waitForImagesLoading = () => {
-            const images = Array.from(document.images).filter((img) => !img.complete);
-            if (images.length === 0) return Promise.resolve();
-            return Promise.all(
-                images.map(
-                    (img) =>
-                        new Promise((res) => {
-                            img.onload = img.onerror = res;
-                        })
-                )
-            );
-        };
+        this.shakaReady = this._initShaka();
 
-        if (document.readyState !== 'complete') {
-            await new Promise((resolve) => window.addEventListener('load', resolve));
-        }
-        await waitForImagesLoading();
+        this.loadQueueState();
+        await this.setupMediaSession();
 
-        // Initialize Shaka player
-        const shaka = await import('shaka-player');
-        shaka.polyfill.installAll();
-        if (shaka.Player.isBrowserSupported()) {
+        this.radioEnabled = radioSettings.isEnabled();
+        this.radioSeeds = [];
+        this.isFetchingRadio = false;
+        this.radioFetchPromise = null;
+
+        this.autoplayEnabled = autoplaySettings.isEnabled();
+        this.autoplaySeeds = [];
+        this.isFetchingAutoplay = false;
+        this.autoplayFetchPromise = null;
+        this._recentlyPlayedIds = [];
+        this._maxRecentlyPlayed = 100;
+
+        this.playbackSequence = 0;
+
+        window.addEventListener('beforeunload', async () => {
+            await this.saveQueueState();
+            import('./listening-tracker.js')
+                .then(({ listeningTracker }) => {
+                    listeningTracker.onTrackEnd();
+                    listeningTracker.forceFlush();
+                })
+                .catch(() => {});
+        });
+
+        document.addEventListener('visibilitychange', async () => {
+            const el = this.activeElement;
+            if (document.visibilityState === 'hidden' && !el.paused) {
+                void audioContextManager.resume();
+            }
+            if (document.visibilityState === 'visible' && !el.paused) {
+                if (!audioContextManager.isReady()) {
+                    audioContextManager.init(el);
+                }
+                await audioContextManager.resume();
+            }
+            if (document.visibilityState === 'visible' && this.autoplayBlocked) {
+                this.autoplayBlocked = false;
+                el.play().catch(() => {});
+            }
+        });
+
+        this._setupVideoSync();
+        this._setupAnimatedCoverSync();
+    }
+
+    async _initShaka() {
+        try {
+            const waitForImagesLoading = () => {
+                const images = Array.from(document.images).filter((img) => !img.complete);
+                if (images.length === 0) return Promise.resolve();
+                return Promise.all(
+                    images.map(
+                        (img) =>
+                            new Promise((res) => {
+                                img.onload = img.onerror = res;
+                            })
+                    )
+                );
+            };
+
+            if (document.readyState !== 'complete') {
+                await new Promise((resolve) => window.addEventListener('load', resolve));
+            }
+            await waitForImagesLoading();
+
+            const shaka = await import('shaka-player');
+            shaka.polyfill.installAll();
+            if (!shaka.Player.isBrowserSupported()) {
+                console.error('Browser not supported for Shaka Player');
+                return;
+            }
+
             this.shakaPlayer = new shaka.Player();
             this.shakaPlayer.configure({
                 streaming: {
@@ -161,61 +216,10 @@ export class Player {
 
             this.shakaInitialized = false;
 
-            // Monitor and bridge different codec groups (e.g. AAC to FLAC) since native ABR isolates them
             setInterval(this.evaluateCrossCodecAbr.bind(this), 3000);
-        } else {
-            console.error('Browser not supported for Shaka Player');
+        } catch (e) {
+            console.error('Shaka Player initialization failed:', e);
         }
-
-        this.loadQueueState();
-        await this.setupMediaSession();
-
-        this.radioEnabled = radioSettings.isEnabled();
-        this.radioSeeds = [];
-        this.isFetchingRadio = false;
-        this.radioFetchPromise = null;
-
-        this.autoplayEnabled = autoplaySettings.isEnabled();
-        this.autoplaySeeds = [];
-        this.isFetchingAutoplay = false;
-        this.autoplayFetchPromise = null;
-        this._recentlyPlayedIds = [];
-        this._maxRecentlyPlayed = 100;
-
-        this.playbackSequence = 0;
-
-        window.addEventListener('beforeunload', async () => {
-            await this.saveQueueState();
-            import('./listening-tracker.js')
-                .then(({ listeningTracker }) => {
-                    listeningTracker.onTrackEnd();
-                    listeningTracker.forceFlush();
-                })
-                .catch(() => {});
-        });
-
-        // Handle visibility change - AudioContext can be suspended when backgrounded
-        document.addEventListener('visibilitychange', async () => {
-            const el = this.activeElement;
-            if (document.visibilityState === 'hidden' && !el.paused) {
-                // Proactively resume context when going to background to prevent suspension
-                void audioContextManager.resume();
-            }
-            if (document.visibilityState === 'visible' && !el.paused) {
-                // Ensure audio context is resumed when user returns to the app
-                if (!audioContextManager.isReady()) {
-                    audioContextManager.init(el);
-                }
-                await audioContextManager.resume();
-            }
-            if (document.visibilityState === 'visible' && this.autoplayBlocked) {
-                this.autoplayBlocked = false;
-                el.play().catch(() => {});
-            }
-        });
-
-        this._setupVideoSync();
-        this._setupAnimatedCoverSync();
     }
 
     _setupAnimatedCoverSync() {
@@ -399,6 +403,8 @@ export class Player {
                         };
                         if (coverEl.tagName === 'VIDEO') {
                             const img = document.createElement('img');
+                            img.crossOrigin = 'anonymous';
+                            img.referrerPolicy = 'no-referrer';
                             img.className = coverEl.className;
                             img.id = coverEl.id;
                             setImgSrcset(img);
@@ -530,12 +536,16 @@ export class Player {
         if (this.isIOS) {
             // iOS: set handlers only when playback starts. Setting them in the constructor makes
             // the lock screen show +10/-10. Registering on first 'playing' gives next/previous track
-            this.audio.addEventListener('playing', () => setHandlers(), { once: true });
+            this.audio.addEventListener('playing', () => setHandlers().catch(() => {}), { once: true });
             if (this.video) {
-                this.video.addEventListener('playing', () => setHandlers(), { once: true });
+                this.video.addEventListener('playing', () => setHandlers().catch(() => {}), { once: true });
             }
         } else {
-            await setHandlers();
+            try {
+                await setHandlers();
+            } catch (e) {
+                console.warn('MediaSession action handlers not registered:', e);
+            }
         }
 
         // Android Auto bridge: allows MusicService.kt to trigger media actions via JS
@@ -643,6 +653,7 @@ export class Player {
                 const streamUrl = streamInfo.url;
 
                 if (streamInfo.playbackType?.includes('cenc')) continue;
+                if (this.isNativeAmazonHlsDecryptionUrl(streamUrl)) continue;
 
                 // Warm connection and pre-fetch
                 if (!streamUrl.startsWith('blob:')) {
@@ -733,6 +744,43 @@ export class Player {
 
     backfillReplayGainFromTrack(_track, _currentSequence) {}
 
+    shouldUseNativeAmazonDecrypter() {
+        return !canUseNativeAmazonCenc;
+    }
+
+    getAmazonNativeDecrypterCodec() {
+        const isAacQuality = this.quality === 'HIGH' || this.quality === 'SD_HIGH' || this.quality === 'SD_LOW';
+        return isAacQuality ? 'mp4a' : isSafari ? 'flac-hls' : 'flac';
+    }
+
+    isNativeAmazonHlsDecryptionUrl(url) {
+        if (!url || !url.includes('/api/decrypt-stream')) return false;
+
+        try {
+            const parsed = new URL(url, window.location.origin);
+            return parsed.searchParams.get('codec') === 'flac-hls';
+        } catch {
+            return url.includes('codec=flac-hls');
+        }
+    }
+
+    getNativeAmazonDecryptionUrl(streamInfo, streamUrl) {
+        if (!this.shouldUseNativeAmazonDecrypter()) return null;
+        if (!streamInfo || streamInfo.provider !== 'amazon' || !streamInfo.decryptionKey || !streamUrl) return null;
+        if (streamUrl.includes('/api/decrypt-stream')) return null;
+
+        const sourceUrl = streamInfo.sourceUrl || streamUrl;
+        if (!sourceUrl || sourceUrl.startsWith('blob:') || sourceUrl.includes('.mpd')) return null;
+
+        const params = new URLSearchParams();
+        params.set('url', sourceUrl);
+        params.set('key', streamInfo.decryptionKey);
+        params.set('codec', this.getAmazonNativeDecrypterCodec());
+
+        console.warn('[Amazon SW Decrypter] Player rescued raw Amazon stream URL');
+        return `${window.location.protocol}//${window.location.host}/api/decrypt-stream?${params.toString()}`;
+    }
+
     tryStartPreloadedTrackImmediately({
         track,
         activeElement,
@@ -741,7 +789,11 @@ export class Player {
         startTime = 0,
         recursiveCount = 0,
     }) {
-        const streamInfo = this.preloadCache.get(track.id);
+        const cachedStreamInfo = this.preloadCache.get(track.id);
+        const rescuedStreamUrl = this.getNativeAmazonDecryptionUrl(cachedStreamInfo, cachedStreamInfo?.url);
+        const streamInfo = rescuedStreamUrl
+            ? { ...cachedStreamInfo, url: rescuedStreamUrl, playbackType: [], preloadManager: null, preloader: null }
+            : cachedStreamInfo;
         const streamUrl = streamInfo?.url;
         const canReuseAudioElement = previousActiveElement === this.audio && activeElement === this.audio;
 
@@ -1031,6 +1083,7 @@ export class Player {
     }
 
     async playTrackFromQueue(startTime = 0, recursiveCount = 0, isRetry = false, options = {}) {
+        await this.shakaReady;
         const { preserveGestureToken = false } = options;
         if (!isRetry) {
             this.isFallbackRetry = false;
@@ -1130,6 +1183,7 @@ export class Player {
             inactiveElement.pause();
             inactiveElement.src = '';
             inactiveElement.removeAttribute('src');
+            inactiveElement.load();
             inactiveElement.style.display = 'none';
             if (inactiveElement.parentElement !== document.body) {
                 document.body.appendChild(inactiveElement);
@@ -1143,6 +1197,7 @@ export class Player {
                 activeElement.pause();
                 activeElement.src = '';
                 activeElement.removeAttribute('src');
+                activeElement.load();
             }
         }
 
@@ -1182,6 +1237,8 @@ export class Player {
                     let imgEl = coverEl;
                     if (coverEl.tagName === 'VIDEO') {
                         imgEl = document.createElement('img');
+                        imgEl.crossOrigin = 'anonymous';
+                        imgEl.referrerPolicy = 'no-referrer';
                         imgEl.className = coverEl.className;
                         imgEl.id = coverEl.id;
                         coverEl.replaceWith(imgEl);
@@ -1406,8 +1463,19 @@ export class Player {
                     : this.api.getStreamUrl(track.id, this.quality);
 
                 // We only need the legacy track info if we missed getting ReplayGain from the manifest endpoint
-                const resolvedStreamInfo = await streamInfoPromise;
+                let resolvedStreamInfo = await streamInfoPromise;
                 if (this.playbackSequence !== currentSequence) return;
+
+                const rescuedStreamUrl = this.getNativeAmazonDecryptionUrl(resolvedStreamInfo, resolvedStreamInfo.url);
+                if (rescuedStreamUrl) {
+                    resolvedStreamInfo = {
+                        ...resolvedStreamInfo,
+                        url: rescuedStreamUrl,
+                        playbackType: [],
+                        preloadManager: null,
+                        preloader: null,
+                    };
+                }
 
                 streamUrl = resolvedStreamInfo.url;
                 if (resolvedStreamInfo.provider === 'amazon' && resolvedStreamInfo.quality) {
@@ -2615,7 +2683,7 @@ export class Player {
 
     updateMediaSessionPlaybackState() {
         const isPlaying = !this.activeElement.paused;
-        void MediaSession.setPlaybackState({ playbackState: isPlaying ? 'playing' : 'paused' });
+        MediaSession.setPlaybackState({ playbackState: isPlaying ? 'playing' : 'paused' }).catch(() => {});
 
         // Start/stop Android foreground service to prevent background audio throttling
         this._updateBackgroundAudioService(isPlaying);
