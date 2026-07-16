@@ -179,14 +179,32 @@ export const apiSettings = {
             }
         }
 
-        if (type === 'streaming' || type === 'api') {
-            // Guarantee the reliable monochrome.tf regional hosts are always in
-            // the pool and tried first. The default streaming pool
-            // (hifi.geeked.wtf / *.qqdl.site) and the tidal-uptime.geeked.wtf
-            // instance API are frequently down/blocked for this fork's origin;
-            // these two hosts stay up and serve CORS to any origin.
-            const RELIABLE = ['https://eu-central.monochrome.tf', 'https://us-west.monochrome.tf'];
-            for (const url of [...RELIABLE].reverse()) {
+        if (type === 'streaming') {
+            // The default streaming pool (hifi.geeked.wtf / *.qqdl.site) and the
+            // tidal-uptime.geeked.wtf instance API are down for this fork, and
+            // fetchWithRetry's tryInstances() picks a RANDOM start index while
+            // the per-instance fetch has NO timeout — so one dead host stalls
+            // playback forever. Restrict streaming to the reliable monochrome.tf
+            // regional hosts (up + CORS-open to any origin) so a random pick can
+            // never land on a hanging instance. User-added instances stay first.
+            const reliable = [
+                { url: 'https://eu-central.monochrome.tf', version: 'reliable' },
+                { url: 'https://us-west.monochrome.tf', version: 'reliable' },
+            ];
+            const merged = userUrls.map((u) =>
+                typeof u === 'string' ? { url: u, isUser: true } : { ...u, isUser: true }
+            );
+            for (const r of reliable) {
+                if (!merged.some((i) => (typeof i === 'string' ? i : i?.url) === r.url)) merged.push(r);
+            }
+            return merged;
+        }
+
+        if (type === 'api') {
+            // Prefer the reliable regional hosts for metadata too (harmless: api
+            // tries native TIDAL first anyway).
+            const reliable = ['https://eu-central.monochrome.tf', 'https://us-west.monochrome.tf'];
+            for (const url of [...reliable].reverse()) {
                 if (!combined.some((i) => (typeof i === 'string' ? i : i?.url) === url)) {
                     combined.unshift({ url, version: 'reliable' });
                 }

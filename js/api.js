@@ -2957,6 +2957,26 @@ export class LosslessAPI {
             }
         }
 
+        // All non-TIDAL providers failed (Amazon Turnstile domain-locked / Qobuz
+        // disabled / Deezer proxy down). Fall back to the TIDAL manifest we
+        // already resolved above: the upstream merge computes `streamUrl` but
+        // only returns Amazon/Qobuz/Deezer, silently discarding TIDAL. Restore
+        // the fork's pre-merge behaviour of using it so playback still works.
+        if (streamUrl) {
+            const result = {
+                url: streamUrl,
+                rgInfo: manifestRgInfo || {
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+                provider: 'tidal',
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
         notifyAudioSourceMissing();
         throw new Error(
             track?.isrc
