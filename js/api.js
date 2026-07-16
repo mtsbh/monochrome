@@ -1907,19 +1907,6 @@ export class LosslessAPI {
                 (isrc && items.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase())) || items[0];
             if (!match?.id) return null;
             const streamUrl = `${base}/api/download/stream/${match.id}?quality=${dzQuality}`;
-            // deemix's stream endpoint is flaky (intermittent 502s). Verify it is
-            // actually serving audio (tiny ranged GET through our proxy) before
-            // committing, so getStreamUrl can fall through to TIDAL if it's down.
-            const vController = new AbortController();
-            const vTimeout = setTimeout(() => vController.abort(), 8000);
-            const verify = await fetch(getProxyUrl(streamUrl), {
-                headers: { Range: 'bytes=0-1' },
-                signal: vController.signal,
-            });
-            clearTimeout(vTimeout);
-            if (!verify.ok) return null;
-            const ct = verify.headers.get('content-type') || '';
-            if (!/audio|octet-stream|flac|mpeg/i.test(ct)) return null;
             const rgInfo =
                 typeof match.gain === 'number'
                     ? {
@@ -1929,7 +1916,24 @@ export class LosslessAPI {
                           albumPeakAmplitude: 1,
                       }
                     : null;
-            return { url: streamUrl, provider: 'deezer', format: dzQuality, rgInfo };
+            const result = { url: streamUrl, provider: 'deezer', format: dzQuality, rgInfo };
+            // deemix's stream endpoint is flaky. Quick liveness probe: skip to
+            // the next provider ONLY on an explicit failure status (a down
+            // backend returns 502 through our proxy). Treat a slow/timeout probe
+            // as "probably fine" and hand the URL to the player anyway.
+            try {
+                const vController = new AbortController();
+                const vTimeout = setTimeout(() => vController.abort(), 6000);
+                const verify = await fetch(getProxyUrl(streamUrl), {
+                    headers: { Range: 'bytes=0-1' },
+                    signal: vController.signal,
+                });
+                clearTimeout(vTimeout);
+                if (!verify.ok) return null;
+            } catch {
+                // timeout/network hiccup — stay optimistic
+            }
+            return result;
         } catch (e) {
             console.warn(`SquidWTF Deezer failed for "${title}":`, e);
             return null;
