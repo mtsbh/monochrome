@@ -89,6 +89,8 @@ export const apiSettings = {
                         { url: 'https://wolf.qqdl.site', version: '2.2' },
                     ],
                     streaming: [
+                        { url: 'https://eu-central.monochrome.tf', version: '2.7' },
+                        { url: 'https://us-west.monochrome.tf', version: '2.7' },
                         { url: 'https://hifi.geeked.wtf', version: '2.7' },
                         { url: 'https://maus.qqdl.site', version: '2.6' },
                         { url: 'https://vogel.qqdl.site', version: '2.6' },
@@ -174,6 +176,20 @@ export const apiSettings = {
                 typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null;
             if (selfOrigin && !combined.some((i) => (typeof i === 'string' ? i : i?.url) === selfOrigin)) {
                 combined.unshift({ url: selfOrigin, version: 'self', isSelf: true });
+            }
+        }
+
+        if (type === 'streaming' || type === 'api') {
+            // Guarantee the reliable monochrome.tf regional hosts are always in
+            // the pool and tried first. The default streaming pool
+            // (hifi.geeked.wtf / *.qqdl.site) and the tidal-uptime.geeked.wtf
+            // instance API are frequently down/blocked for this fork's origin;
+            // these two hosts stay up and serve CORS to any origin.
+            const RELIABLE = ['https://eu-central.monochrome.tf', 'https://us-west.monochrome.tf'];
+            for (const url of [...RELIABLE].reverse()) {
+                if (!combined.some((i) => (typeof i === 'string' ? i : i?.url) === url)) {
+                    combined.unshift({ url, version: 'reliable' });
+                }
             }
         }
 
