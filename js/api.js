@@ -1888,6 +1888,8 @@ export class LosslessAPI {
         const artist = track?.artist?.name || track?.artists?.[0]?.name || '';
         if (!title) return null;
         const base = 'https://deemix.squid.wtf';
+        // deemix ignores the quality param and serves its account default
+        // (Deezer 16-bit FLAC); we still pass it for forward-compat.
         const dzQuality = quality === 'HIGH' || quality === 'LOW' ? 'mp3_320' : 'flac';
         // deemix search is text-only (no ISRC lookup), so query by title+artist
         // and then pick the exact ISRC match from the results when possible.
