@@ -1896,7 +1896,9 @@ export class LosslessAPI {
         const query = `${title} ${artist}`.trim();
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            // deemix's search is often slow (several seconds); give it room so it
+            // wins on the first try instead of aborting into the dead-provider chain.
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
             const res = await fetch(getProxyUrl(`${base}/api/search?q=${encodeURIComponent(query)}`), {
                 signal: controller.signal,
             });
