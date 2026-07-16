@@ -1778,7 +1778,7 @@ export class LosslessAPI {
                     const streamTimeoutId = setTimeout(() => streamController.abort(), 8000);
 
                     const streamRes = await fetch(
-                        `${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`,
+                        getProxyUrl(`${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`),
                         { signal: streamController.signal }
                     );
                     clearTimeout(streamTimeoutId);
