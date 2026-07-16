@@ -7,6 +7,8 @@ const ALLOWED_HOSTS = [
     'akamaized.net',
     'qobuz.com',
     'streaming.qobuz.com',
+    'squid.wtf',
+    'dzcdn.net',
 ];
 
 function isAllowed(url) {

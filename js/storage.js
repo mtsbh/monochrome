@@ -98,7 +98,10 @@ export const apiSettings = {
                         { url: 'https://hund.qqdl.site', version: '2.6' },
                         { url: 'https://wolf.qqdl.site', version: '2.6' },
                     ],
-                    qobuz: [{ url: 'https://qobuz.kennyy.com.br', version: '1.0' }],
+                    qobuz: [
+                        { url: 'https://qobuz.squid.wtf', version: '2.7' },
+                        { url: 'https://qobuz.kennyy.com.br', version: '1.0' },
+                    ],
                 };
                 this.instancesLoaded = true;
                 this._loadPromise = null;
@@ -109,7 +112,9 @@ export const apiSettings = {
 
             const isBlockedInstance = (item) => {
                 const url = typeof item === 'string' ? item : item.url;
-                return url && (/\.squid\.wtf/i.test(url) || /tidal-api\.binimum\.org/i.test(url));
+                // squid.wtf is intentionally allowed (free Qobuz/Tidal backends);
+                // only the binimum tracker instance stays blocked.
+                return url && /tidal-api\.binimum\.org/i.test(url);
             };
 
             if (data.api && Array.isArray(data.api)) {
@@ -126,9 +131,14 @@ export const apiSettings = {
                 groupedInstances.qobuz = data.qobuz;
             }
 
-            // Ensure default Qobuz instance is always available
-            if (groupedInstances.qobuz.length === 0) {
-                groupedInstances.qobuz = [{ url: 'https://qobuz.kennyy.com.br', version: '1.0' }];
+            // Ensure the free full-quality Qobuz instances are always available.
+            for (const q of [
+                { url: 'https://qobuz.kennyy.com.br', version: '1.0' },
+                { url: 'https://qobuz.squid.wtf', version: '2.7' },
+            ]) {
+                if (!groupedInstances.qobuz.some((i) => (typeof i === 'string' ? i : i?.url) === q.url)) {
+                    groupedInstances.qobuz.unshift(q);
+                }
             }
 
             this.defaultInstances = groupedInstances;

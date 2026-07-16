@@ -1732,7 +1732,6 @@ export class LosslessAPI {
     }
 
     async getQobuzStreamUrl(isrc, quality = 'LOSSLESS') {
-        return null; // Temporarily disabled
         let qobuzInstances = [];
         try {
             qobuzInstances = await this.settings.getInstances('qobuz');
@@ -1786,7 +1785,10 @@ export class LosslessAPI {
                     if (!streamRes.ok) continue;
                     const streamJson = await streamRes.json();
 
-                    if (streamJson.success && streamJson.data && streamJson.data.url) {
+                    // Skip preview-only results (sample:true) — e.g. our own
+                    // token-less qobuz-stream.js returns 30s previews — so we
+                    // fall through to a full-quality instance (qobuz.squid.wtf).
+                    if (streamJson.success && streamJson.data && streamJson.data.url && !streamJson.data.sample) {
                         let rgInfo = null;
                         if (match.audio_info) {
                             rgInfo = {
@@ -1874,6 +1876,64 @@ export class LosslessAPI {
             return null;
         }
         return { url, format, provider: 'deezer', rgInfo: null };
+    }
+
+    // Free full-quality Deezer via SquidWTF's deemix backend (no credentials,
+    // no domain-lock). Search by ISRC -> track id -> direct FLAC stream.
+    // deemix.squid.wtf is allow-listed in netlify/edge-functions/audio-proxy.js
+    // so both the search and the audio hop route through our own proxy.
+    async getSquidDeezerStreamUrl(track, quality = 'LOSSLESS') {
+        const isrc = track?.isrc;
+        const title = track?.title;
+        const artist = track?.artist?.name || track?.artists?.[0]?.name || '';
+        if (!title) return null;
+        const base = 'https://deemix.squid.wtf';
+        const dzQuality = quality === 'HIGH' || quality === 'LOW' ? 'mp3_320' : 'flac';
+        // deemix search is text-only (no ISRC lookup), so query by title+artist
+        // and then pick the exact ISRC match from the results when possible.
+        const query = `${title} ${artist}`.trim();
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            const res = await fetch(getProxyUrl(`${base}/api/search?q=${encodeURIComponent(query)}`), {
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            if (!res.ok) return null;
+            const json = await res.json();
+            const items = json?.data || [];
+            if (items.length === 0) return null;
+            const match =
+                (isrc && items.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase())) || items[0];
+            if (!match?.id) return null;
+            const streamUrl = `${base}/api/download/stream/${match.id}?quality=${dzQuality}`;
+            // deemix's stream endpoint is flaky (intermittent 502s). Verify it is
+            // actually serving audio (tiny ranged GET through our proxy) before
+            // committing, so getStreamUrl can fall through to TIDAL if it's down.
+            const vController = new AbortController();
+            const vTimeout = setTimeout(() => vController.abort(), 8000);
+            const verify = await fetch(getProxyUrl(streamUrl), {
+                headers: { Range: 'bytes=0-1' },
+                signal: vController.signal,
+            });
+            clearTimeout(vTimeout);
+            if (!verify.ok) return null;
+            const ct = verify.headers.get('content-type') || '';
+            if (!/audio|octet-stream|flac|mpeg/i.test(ct)) return null;
+            const rgInfo =
+                typeof match.gain === 'number'
+                    ? {
+                          trackReplayGain: match.gain,
+                          trackPeakAmplitude: 1,
+                          albumReplayGain: match.gain,
+                          albumPeakAmplitude: 1,
+                      }
+                    : null;
+            return { url: streamUrl, provider: 'deezer', format: dzQuality, rgInfo };
+        } catch (e) {
+            console.warn(`SquidWTF Deezer failed for "${title}":`, e);
+            return null;
+        }
     }
 
     getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {
@@ -2733,6 +2793,24 @@ export class LosslessAPI {
                             albumReplayGain: 0,
                             albumPeakAmplitude: 1,
                         },
+                    };
+                    this.streamCache.set(cacheKey, result);
+                    return result;
+                }
+                // Free full-quality Deezer (SquidWTF/deemix) — full FLAC, no
+                // credentials — before falling back to the flaky/preview TIDAL path.
+                const squidDeezer = await this.getSquidDeezerStreamUrl(track, quality);
+                if (squidDeezer && squidDeezer.url) {
+                    const result = {
+                        url: squidDeezer.url,
+                        rgInfo: squidDeezer.rgInfo || {
+                            trackReplayGain: 0,
+                            trackPeakAmplitude: 1,
+                            albumReplayGain: 0,
+                            albumPeakAmplitude: 1,
+                        },
+                        provider: 'deezer',
+                        deezerFormat: squidDeezer.format,
                     };
                     this.streamCache.set(cacheKey, result);
                     return result;
