@@ -1921,21 +1921,52 @@ export class LosslessAPI {
                       }
                     : null;
             const result = { url: streamUrl, provider: 'deezer', format: dzQuality, rgInfo };
-            // deemix's stream endpoint is flaky. Quick liveness probe: skip to
-            // the next provider ONLY on an explicit failure status (a down
-            // backend returns 502 through our proxy). Treat a slow/timeout probe
-            // as "probably fine" and hand the URL to the player anyway.
+            // deemix's stream endpoint is flaky AND ignores Range (always serves
+            // the full file from byte 0), so our /api/audio-proxy has to relay the
+            // WHOLE file in one shot to give <audio> a working 206. Netlify's edge
+            // function has a hard wall-clock ceiling (~60-90s) on that single
+            // relay; a slow/large file (long track, deemix under load) blows past
+            // it and the connection dies mid-song. Measure deemix's real-time
+            // throughput on a small chunk and bail BEFORE playback starts if the
+            // full transfer would exceed our safety budget — better an honest
+            // TIDAL preview than a track that plays then abruptly cuts off.
+            const SAFE_RELAY_SECONDS = 55;
+            const SAMPLE_BYTES = 1048576; // 1 MiB — our proxy streams the whole
+            // file regardless of the requested Range end (deemix ignores Range
+            // too), so we must stop reading ourselves rather than await the
+            // full body.
             try {
                 const vController = new AbortController();
-                const vTimeout = setTimeout(() => vController.abort(), 6000);
-                const verify = await fetch(getProxyUrl(streamUrl), {
-                    headers: { Range: 'bytes=0-1' },
-                    signal: vController.signal,
-                });
+                const vTimeout = setTimeout(() => vController.abort(), 8000);
+                const probeStart = Date.now();
+                const verify = await fetch(getProxyUrl(streamUrl), { signal: vController.signal });
+                if (!verify.ok) {
+                    clearTimeout(vTimeout);
+                    return null;
+                }
+                const totalBytes = Number(verify.headers.get('content-length')) || 0;
+                const reader = verify.body.getReader();
+                let sampled = 0;
+                while (sampled < SAMPLE_BYTES) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    sampled += value.length;
+                }
+                reader.cancel().catch(() => {});
                 clearTimeout(vTimeout);
-                if (!verify.ok) return null;
+                const elapsedSec = (Date.now() - probeStart) / 1000;
+                if (sampled > 0 && totalBytes > sampled && elapsedSec > 0) {
+                    const bytesPerSec = sampled / elapsedSec;
+                    const projectedTotalSec = totalBytes / bytesPerSec;
+                    if (projectedTotalSec > SAFE_RELAY_SECONDS) {
+                        console.warn(
+                            `SquidWTF Deezer skipped "${title}": projected ${projectedTotalSec.toFixed(0)}s relay exceeds safe budget (${(bytesPerSec / 1024).toFixed(0)} KB/s, ${(totalBytes / 1048576).toFixed(1)} MB)`
+                        );
+                        return null;
+                    }
+                }
             } catch {
-                // timeout/network hiccup — stay optimistic
+                // timeout/network hiccup on the probe itself — stay optimistic
             }
             return result;
         } catch (e) {
