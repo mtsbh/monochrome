@@ -180,7 +180,13 @@
                 <li data-action="track-info" data-type-filter="track,video">Track info</li>
                 <li data-action="open-original-url" data-type-filter="track,video">Open original URL</li>
                 <li data-action="download">Download</li>
-                <li class="separator"></li>
+                <li class="separator"
+                    data-type-filter="track,album,artist"
+                    data-action="horizantal-rule"
+                    >
+                     <!-- IDK why adding a `data-action` is necessary, but without it
+                      the `data-type-filter` gets ignored; So I've added it -->
+                </li>
                 <li
                     data-action="block-track"
                     data-type-filter="track"
@@ -5833,10 +5839,46 @@
                             <div class="settings-group">
                                 <div class="setting-item">
                                     <div class="info">
+                                        <span class="label">Monochrome Playback</span>
+                                        <span class="description"
+                                            >Use Monochrome's in-house lossless source first, with the existing audio
+                                            providers as fallbacks.</span
+                                        >
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="monochrome-playback-toggle" checked />
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="label">Monochrome Playback API URL</span>
+                                        <span class="description">The in-house playback API endpoint</span>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="monochrome-playback-api-base-url"
+                                        placeholder="https://track-api.monochrome.tf"
+                                        style="
+                                            width: 220px;
+                                            padding: 0.35rem 0.5rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--card);
+                                            color: var(--foreground);
+                                            font-size: 0.8rem;
+                                        "
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="settings-group">
+                                <div class="setting-item">
+                                    <div class="info">
                                         <span class="label">Amazon Music</span>
                                         <span class="description"
-                                            >Use Amazon Music streams first, then fall back to Qobuz, then Deezer as a
-                                            last resort.</span
+                                            >Fallback source used when Monochrome Playback cannot resolve a
+                                            stream.</span
                                         >
                                     </div>
                                     <label class="toggle-switch">
@@ -5916,7 +5958,7 @@
                                     <div class="info">
                                         <span class="label">Deezer Fallback</span>
                                         <span class="description"
-                                            >Last-resort source, used only when both Amazon Music and Qobuz fail. Tops
+                                            >Last-resort source when the primary and other fallback providers fail. Tops
                                             out at 16-bit lossless (FLAC).</span
                                         >
                                     </div>
@@ -6315,7 +6357,7 @@
                         </p>
                         <div class="donate-goal-card">
                             <div class="donate-goal-card-header">
-                                <span class="donate-goal-card-label">July Donation Goal</span>
+                                <span class="donate-goal-card-label">Q3 Donation Goal</span>
                                 <span id="donate-goal-percent" class="donate-goal-card-percent">0%</span>
                             </div>
                             <div class="donate-goal-track">
@@ -6323,7 +6365,7 @@
                             </div>
                             <div class="donate-goal-card-footer">
                                 <span id="donate-goal">$0.00</span>
-                                <span>of $250.00 goal</span>
+                                <span>of $1,000.00 goal</span>
                             </div>
                         </div>
                         <div class="donate-actions" id="donate-actions">
