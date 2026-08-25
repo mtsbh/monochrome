@@ -1,4 +1,5 @@
 //js/app.js
+import './sentry.js';
 import discordSvg from '../images/discord.svg?svg&size=22';
 import googleSvg from '../images/google.svg?svg&size=22';
 import githubSvg from '../images/github.svg?svg&size=22';
@@ -15,8 +16,7 @@ import {
     pwaUpdateSettings,
     modalSettings,
     keyboardShortcuts,
-    monochromePlaybackSettings,
-    amazonMusicSettings,
+    unifiedPlaybackSettings,
 } from './storage.js';
 import { UIRenderer } from './ui.js';
 import { Player } from './player.js';
@@ -25,7 +25,7 @@ import { LyricsManager, openLyricsPanel, clearLyricsPanelSync } from './lyrics.j
 import { createRouter, updateTabTitle, navigate } from './router.js';
 import { initializePlayerEvents, initializeTrackInteractions, handleTrackAction } from './events.js';
 import { initializeUIInteractions, updateLocalFilesSupportUI } from './ui-interactions.js';
-import { debounce, getShareUrl, sanitizeForFilename } from './utils.js';
+import { debounce, getShareUrl, normalizeQualityToken, sanitizeForFilename } from './utils.js';
 import { sidePanelManager } from './side-panel.js';
 import { db } from './db.js';
 import { showNotification } from './downloads.js';
@@ -59,7 +59,7 @@ import {
 } from './icons.js';
 import { HiFiClient } from './HiFi.js';
 
-const AMAZON_DECRYPTER_SW_VERSION = '2026-06-23-flac-hls-v8';
+const AMAZON_DECRYPTER_SW_VERSION = '2026-08-09-atmos-v11';
 
 // Capture real iOS state before spoofing (needed for background audio)
 if (typeof window !== 'undefined') {
@@ -317,7 +317,7 @@ function initializeKeyboardShortcuts(player, _audioPlayer) {
         if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
 
         const shortcuts = keyboardShortcuts.getShortcuts();
-        const pressedKey = e.key.toLowerCase();
+        const pressedKey = (e.key || '').toLowerCase();
         const hasShift = e.shiftKey;
         const hasCtrl = e.ctrlKey || e.metaKey;
         const hasAlt = e.altKey;
@@ -342,7 +342,6 @@ function initializeKeyboardShortcuts(player, _audioPlayer) {
         }
     });
 }
-
 
 async function closeFullscreenOverlay() {
     if (UIRenderer.instance?.dismissFullscreenCover) {
@@ -596,18 +595,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await MusicAPI.initialize(apiSettings);
 
-    if (monochromePlaybackSettings.isEnabled()) {
-        MusicAPI.instance.tidalAPI.getMonochromePlaybackSession().catch(() => null);
-    }
-
-    if (amazonMusicSettings.isEnabled() && !amazonMusicSettings.getTurnstileBypassToken().trim()) {
-        MusicAPI.instance.tidalAPI.getTurnstileJwt().catch(() => null);
+    if (unifiedPlaybackSettings.isEnabled() && unifiedPlaybackSettings.getApiToken().trim()) {
+        MusicAPI.instance.tidalAPI.getUnifiedTurnstileJwt().catch(() => null);
     }
 
     const audioPlayer = document.getElementById('audio-player');
 
     // i love ios and macos!!!! webkit fucking SUCKS BULLSHIT sorry ios/macos heads yall getting lossless only playback
-    const currentQuality = localStorage.getItem('playback-quality') || 'HI_RES_LOSSLESS';
+    const storedQuality = localStorage.getItem('playback-quality') || 'HI_RES_LOSSLESS';
+    const currentQuality = normalizeQualityToken(storedQuality) || storedQuality;
+    if (currentQuality !== storedQuality) localStorage.setItem('playback-quality', currentQuality);
     await Player.initialize(audioPlayer, MusicAPI.instance, currentQuality);
 
     // Initialize tracker
@@ -780,7 +777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         UIRenderer.instance.setCurrentTrack(Player.instance.currentTrack);
     }
 
-    document.querySelector('.now-playing-bar').addEventListener('click', async (e) => {
+    document.querySelector('.now-playing-bar')?.addEventListener('click', async (e) => {
         if (!e.target.closest('.cover')) return;
 
         if (!Player.instance.currentTrack) {
@@ -928,17 +925,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('xml-import-panel').style.display = importType === 'xml' ? 'block' : 'none';
             document.getElementById('m3u-import-panel').style.display = importType === 'm3u' ? 'block' : 'none';
 
-            // Clear all file inputs except the active one
-            document.getElementById('csv-file-input').value =
-                importType === 'csv' ? document.getElementById('csv-file-input').value : '';
-            document.getElementById('jspf-file-input').value =
-                importType === 'jspf' ? document.getElementById('jspf-file-input').value : '';
-            document.getElementById('xspf-file-input').value =
-                importType === 'xspf' ? document.getElementById('xspf-file-input').value : '';
-            document.getElementById('xml-file-input').value =
-                importType === 'xml' ? document.getElementById('xml-file-input').value : '';
-            document.getElementById('m3u-file-input').value =
-                importType === 'm3u' ? document.getElementById('m3u-file-input').value : '';
+            // Clear all file inputs except the active one (setting a file input's
+            // value to a non-empty string throws InvalidStateError)
+            if (importType !== 'csv') document.getElementById('csv-file-input').value = '';
+            if (importType !== 'jspf') document.getElementById('jspf-file-input').value = '';
+            if (importType !== 'xspf') document.getElementById('xspf-file-input').value = '';
+            if (importType !== 'xml') document.getElementById('xml-file-input').value = '';
+            if (importType !== 'm3u') document.getElementById('m3u-file-input').value = '';
         });
     });
     const spotifyBtn = document.getElementById('csv-spotify-btn');
@@ -1123,7 +1116,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Auto-update lyrics when track changes
     let previousTrackId = null;
-    audioPlayer.addEventListener('play', async () => {
+    const handleActiveAudioPlay = async (event) => {
+        if (Player.instance.activeElement !== event.currentTarget) return;
         if (!Player.instance.currentTrack) return;
 
         // Update UI with current track info for theme
@@ -1169,7 +1163,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 Player.instance.activeElement
             );
         }
-    });
+    };
+    Player.instance.audioElements.forEach((element) => element.addEventListener('play', handleActiveAudioPlay));
 
     document.addEventListener('click', async (e) => {
         if (e.target.closest('#play-album-btn')) {
@@ -2993,7 +2988,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (user) {
                 const data = await syncManager.getUserData();
                 if (data && data.profile && data.profile.avatar_url) {
-                    headerAccountImg.src = data.profile.avatar_url + '&s=100';
+                    headerAccountImg.src = data.profile.avatar_url + '?s=100';
                     headerAccountImg.style.display = 'block';
                     headerAccountIcon.style.display = 'none';
                 }

@@ -1,19 +1,14 @@
-const SELF_PROXY = '/api/audio-proxy';
-const FALLBACK_PROXY = 'https://audio-proxy.binimum.org/proxy-audio';
+export const isTidalAudioUrl = () => false;
 
 export const getProxyUrl = (url) => {
-    if (!url || typeof url !== 'string') return url;
-    if (window.__tidalOriginExtension) return url;
-    if (url.startsWith('blob:')) return url;
-    // Service-worker decrypter URLs (Amazon/TIDAL CENC) must pass through unwrapped.
-    if (url.includes('/api/decrypt-stream')) return url;
-    if (url.startsWith(SELF_PROXY) || url.startsWith(FALLBACK_PROXY)) return url;
-    return `${SELF_PROXY}?url=${encodeURIComponent(url)}`;
+    if (!url) return url;
+    return url;
 };
 
 export const wrapTidalUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
     return url
         .replace('openapi.tidal.com', 'tidal-proxy.monochrome.tf/openapi')
-        .replace('api.tidal.com', 'tidal-proxy.monochrome.tf/api');
+        .replace('api.tidal.com', 'tidal-proxy.monochrome.tf/api')
+        .replace('https://tidal.com', 'https://tidal-proxy.monochrome.tf/tidal');
 };
