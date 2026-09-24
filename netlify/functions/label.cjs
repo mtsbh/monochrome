@@ -121,6 +121,7 @@ async function findQobuzLabel(name, token) {
         url.searchParams.set('limit', '50');
         url.searchParams.set('app_id', process.env.QOBUZ_APP_ID);
         const res = await fetch(url, { headers: { 'X-User-Auth-Token': token } });
+        if (res.status === 401 || res.status === 403) throw new QobuzAuthError(res.status);
         if (!res.ok) continue;
         const data = await res.json();
         for (const album of data.albums?.items || []) {
@@ -178,6 +179,19 @@ const corsHeaders = {
     'Content-Type': 'application/json',
 };
 
+// Qobuz rejected the token; surfaced as 503 so it isn't mistaken for "label not found".
+class QobuzAuthError extends Error {
+    constructor(status) {
+        super(`Qobuz rejected the auth token (${status}). Update QOBUZ_USER_AUTH_TOKEN in .env.`);
+    }
+}
+
+const authErrorResponse = (err) => ({
+    statusCode: 503,
+    headers: corsHeaders,
+    body: JSON.stringify({ error: err.message, label: null, albums: [], total: 0 }),
+});
+
 exports.handler = async (event) => {
     const params = event.queryStringParameters || {};
     const offset = parseInt(params.offset || '0', 10);
@@ -218,6 +232,7 @@ exports.handler = async (event) => {
             url.searchParams.set('albums_limit', '1');
             url.searchParams.set('app_id', process.env.QOBUZ_APP_ID);
             const res = await fetch(url, { headers: { 'X-User-Auth-Token': token } });
+            if (res.status === 401 || res.status === 403) return authErrorResponse(new QobuzAuthError(res.status));
             if (res.ok) {
                 const data = await res.json();
                 const l = data.label ?? data;
@@ -230,7 +245,8 @@ exports.handler = async (event) => {
     } else {
         try {
             label = await findQobuzLabel(name, token);
-        } catch {
+        } catch (err) {
+            if (err instanceof QobuzAuthError) return authErrorResponse(err);
             return { statusCode: 502, headers: corsHeaders, body: JSON.stringify({ error: 'Qobuz label search failed' }) };
         }
     }

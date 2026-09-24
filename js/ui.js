@@ -6884,7 +6884,7 @@ export class UIRenderer {
                 nameEl.textContent = labelName;
                 albumsContainer.innerHTML = `
                     <div style="opacity: 0.6; padding: 1rem 0;">
-                        <p>Failed to load label catalog.</p>
+                        <p>Failed to load label catalog${err?.message ? `: ${escapeHtml(err.message)}` : '.'}</p>
                         <button class="btn-secondary" id="label-retry-btn" style="margin-top: 0.5rem;">Retry</button>
                     </div>`;
                 document.getElementById('label-retry-btn')?.addEventListener('click', () => this.renderLabelPage(labelName, opts));

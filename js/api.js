@@ -1949,17 +1949,26 @@ export class LosslessAPI {
         }
         if (!result?.url) return null;
 
-        try {
-            const probe = await this.fetchWithTimeout(
-                result.url,
-                { headers: { Range: 'bytes=0-0' }, cache: 'no-store' },
-                6000
-            );
-            probe.body?.cancel().catch(() => {});
-            if (probe.ok) return result;
-            console.debug(`tracks.monochrome.st stream probe failed (${probe.status}) for ${id}`);
-        } catch (err) {
-            console.debug('tracks.monochrome.st stream probe failed:', err);
+        // A track that 500s by trackId often still streams by its recordingId.
+        const candidates = [result];
+        const recordingId = track?.recordingId;
+        if (recordingId && !result.url.endsWith(`/${recordingId}`)) {
+            candidates.push(tracksStreamerAPI.getStreamUrl(recordingId, quality, { track }));
+        }
+
+        for (const candidate of candidates) {
+            try {
+                const probe = await this.fetchWithTimeout(
+                    candidate.url,
+                    { headers: { Range: 'bytes=0-0' }, cache: 'no-store' },
+                    6000
+                );
+                probe.body?.cancel().catch(() => {});
+                if (probe.ok) return candidate;
+                console.debug(`tracks.monochrome.st stream probe failed (${probe.status}) for ${candidate.url}`);
+            } catch (err) {
+                console.debug('tracks.monochrome.st stream probe failed:', err);
+            }
         }
         return null;
     }
