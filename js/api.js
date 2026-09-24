@@ -220,7 +220,9 @@ export class LosslessAPI {
                             .clone()
                             .json()
                             .catch(() => null);
-                        console.warn(`Auth failed (subStatus: ${errorData?.subStatus}) on ${baseUrl}. Trying next instance...`);
+                        console.warn(
+                            `Auth failed (subStatus: ${errorData?.subStatus}) on ${baseUrl}. Trying next instance...`
+                        );
                         instanceIndex++;
                         continue;
                     }
