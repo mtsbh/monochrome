@@ -93,7 +93,7 @@ export const apiSettings = {
 
             const isBlockedInstance = (item) => {
                 const url = typeof item === 'string' ? item : item.url;
-                return url && /\.squid\.wtf/i.test(url);
+                return url && (/\.squid\.wtf/i.test(url) || /tidal-api\.binimum\.org/i.test(url));
             };
 
             if (data.api && Array.isArray(data.api)) {
@@ -138,13 +138,31 @@ export const apiSettings = {
         instancesObj = await this.loadInstancesFromGitHub();
         const userInst = this._loadUserInstances();
 
-        const defaultUrls = instancesObj[type] || instancesObj.api || [];
+        const typeUrls = instancesObj[type];
+        const defaultUrls = (Array.isArray(typeUrls) && typeUrls.length > 0 ? typeUrls : null) ?? instancesObj.api ?? [];
         const userUrls = userInst[type] || [];
 
         const combined = [
             ...userUrls.map((u) => (typeof u === 'string' ? { url: u, isUser: true } : { ...u, isUser: true })),
             ...defaultUrls,
         ];
+
+        if (type === 'qobuz') {
+            // Only the same-origin Qobuz proxy (netlify/functions/qobuz-stream.js)
+            // plus any user-added Qobuz instances. The old public pool
+            // (qobuz.squid.wtf, qobuz.kennyy.com.br) is dead, and falling back to
+            // the TIDAL api pool would send /api/get-music at hosts that don't
+            // serve it.
+            const selfOrigin =
+                typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null;
+            const qobuzInstances = userUrls.map((u) =>
+                typeof u === 'string' ? { url: u, isUser: true } : { ...u, isUser: true }
+            );
+            if (selfOrigin && !qobuzInstances.some((i) => (typeof i === 'string' ? i : i?.url) === selfOrigin)) {
+                qobuzInstances.push({ url: selfOrigin, version: 'self', isSelf: true });
+            }
+            return qobuzInstances;
+        }
 
         if (combined.length === 0) return [];
 
@@ -2552,6 +2570,7 @@ export const sidebarSectionSettings = {
     DEFAULT_ORDER: [
         'sidebar-nav-home',
         'sidebar-nav-library',
+        'sidebar-nav-labels',
         'sidebar-nav-recent',
         'sidebar-nav-unreleased',
         'sidebar-nav-donate',
@@ -2702,8 +2721,20 @@ export const sidebarSectionSettings = {
         const baseOrder = this.DEFAULT_ORDER;
         const safeOrder = Array.isArray(order) ? order.filter((id) => baseOrder.includes(id)) : [];
         const uniqueOrder = [...new Set(safeOrder)];
-        const missing = baseOrder.filter((id) => !uniqueOrder.includes(id));
-        return [...uniqueOrder, ...missing];
+        // Insert missing items at their default position rather than appending at end
+        const result = [...uniqueOrder];
+        baseOrder.forEach((id, defaultIdx) => {
+            if (!result.includes(id)) {
+                // Find the latest preceding default item that exists in result
+                let insertAfter = -1;
+                for (let i = defaultIdx - 1; i >= 0; i--) {
+                    const pos = result.indexOf(baseOrder[i]);
+                    if (pos !== -1) { insertAfter = pos; break; }
+                }
+                result.splice(insertAfter + 1, 0, id);
+            }
+        });
+        return result;
     },
 
     getOrder() {
@@ -3287,7 +3318,7 @@ export const modalSettings = {
         if (document.querySelector('.modal.active')) {
             return true;
         }
-        if (document.querySelector('.modal-overlay')) {
+        if (document.querySelector('body > .modal-overlay')) {
             return true;
         }
         const modalIds = [
@@ -3312,8 +3343,8 @@ export const modalSettings = {
     },
 
     closeAllModals() {
-        // Close all modal overlays
-        document.querySelectorAll('.modal-overlay').forEach((modal) => {
+        // Close dynamically-created overlay modals (direct children of body only)
+        document.querySelectorAll('body > .modal-overlay').forEach((modal) => {
             modal.remove();
         });
 

@@ -412,13 +412,14 @@ class AudioContextManager {
         this.preampNode.gain.value = gainValue;
 
         // Create filters for each frequency band
+        const nyquist = this.audioContext.sampleRate / 2;
         this.filters = this.frequencies.map((freq, index) => {
             const type = (this.currentTypes && this.currentTypes[index]) || 'peaking';
             const q = this.currentQs && this.currentQs[index] > 0 ? this.currentQs[index] : this._calculateQ(index);
             const gain = this.currentGains[index] || 0;
             const filter = this.audioContext.createBiquadFilter();
             filter.type = type;
-            filter.frequency.value = freq;
+            filter.frequency.value = Math.min(freq, nyquist - 1);
             filter.Q.value = q;
             filter.gain.value = gain;
             return filter;
@@ -477,6 +478,11 @@ class AudioContextManager {
         if (!audioElement) return;
 
         this.audio = audioElement;
+
+        if (isIos) {
+            console.log('[AudioContext] Skipping Web Audio initialization on iOS for lock screen compatibility');
+            return;
+        }
 
         try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;

@@ -40,6 +40,7 @@ import { areListeningPartiesDisabled, partyManager } from './listening-party.js'
 import { Visualizer } from './visualizer.js';
 import { audioContextManager } from './audio-context.js';
 import { navigate } from './router.js';
+import { extractLabelName } from './label-utils.js';
 import { sidePanelManager } from './side-panel.js';
 import { searchCommunityPlaylists } from './community-playlists.js';
 import {
@@ -81,6 +82,8 @@ import {
     SVG_SORT,
     SVG_BIN,
     SVG_TRASH,
+    SVG_BOOKMARK,
+    SVG_BOOKMARK_CHECK,
     SVG_GLOBE,
     SVG_INSTAGRAM,
     SVG_FACEBOOK,
@@ -104,6 +107,7 @@ import {
     SVG_CLOCK,
     SVG_SEARCH,
     SVG_CHECKBOX,
+    SVG_DISC,
 } from './icons.js';
 
 const AOTY_BASE = 'https://aoty.edideaur.works';
@@ -299,6 +303,7 @@ export class UIRenderer {
         this.renderLock = false;
         this.lastRecommendedTracks = [];
         this.currentArtistId = null;
+        this._labelArtCache = null; // lazy-loaded from localStorage once
         try {
             this.fullscreenLyricsVisible = localStorage.getItem('fullscreen-lyrics-visible') !== 'false';
         } catch {
@@ -5453,7 +5458,15 @@ export class UIRenderer {
         `;
 
         try {
-            const { album, tracks } = await this.api.getAlbum(albumId, provider);
+            let album, tracks;
+            if (provider === 'qobuz') {
+                const res = await fetch(`/.netlify/functions/qobuz-album?id=${encodeURIComponent(albumId)}`);
+                if (!res.ok) throw new Error(`Qobuz album fetch failed: ${res.status}`);
+                ({ album, tracks } = await res.json());
+                tracks.forEach(t => { if (t.isrc) this.api.registerQobuzTrack(t.id, t.isrc); });
+            } else {
+                ({ album, tracks } = await this.api.getAlbum(albumId, provider));
+            }
             this.currentAlbumId = albumId;
 
             if (_isBlockedCopyright(album.copyright)) {
@@ -5561,14 +5574,23 @@ export class UIRenderer {
                 }
             }
 
-            const firstCopyright = tracks.find((track) => track.copyright)?.copyright;
+            const firstCopyright = tracks.find((track) => track.copyright)?.copyright || album.copyright;
 
             metaEl.innerHTML =
                 (dateDisplay ? `${dateDisplay} • ` : '') + `${tracks.length} tracks • ${formatDuration(totalDuration)}`;
 
+            // Prefer the structured label object (present on Qobuz albums) over copyright string parsing
+            const structuredLabel = album.label;
+            const labelName = structuredLabel?.name || extractLabelName(firstCopyright);
+            const labelHref = structuredLabel?.id
+                ? `/label-id/${structuredLabel.id}`
+                : labelName ? `/label/${encodeURIComponent(labelName)}` : null;
+            const labelHtml = labelName && labelHref
+                ? ` • <a href="${labelHref}" class="label-link" title="${escapeHtml(firstCopyright || '')}">${escapeHtml(labelName)}</a>`
+                : (firstCopyright ? ` • ${escapeHtml(firstCopyright)}` : '');
             prodEl.innerHTML =
-                `By <a href="/artist/${album.artist.id}">${album.artist.name}</a>` +
-                (firstCopyright ? ` • ${firstCopyright}` : '');
+                `By <a href="/artist/${album.artist.id}">${escapeHtml(album.artist.name)}</a>` +
+                labelHtml;
 
             fetchAOTY(`/album?artist=${encodeURIComponent(album.artist.name)}&name=${encodeURIComponent(album.title)}`)
                 .then((data) => {
@@ -5689,6 +5711,13 @@ export class UIRenderer {
                 return a.trackNumber - b.trackNumber;
             });
             await this.renderListWithTracks(tracklistContainer, tracks, false, true);
+
+            if (playBtn) {
+                playBtn.onclick = () => {
+                    this.player.setQueue(tracks, 0);
+                    this.player.playTrackFromQueue();
+                };
+            }
 
             recentActivityManager.addAlbum(album);
 
@@ -6424,6 +6453,444 @@ export class UIRenderer {
         } catch (error) {
             console.error('Failed to load mix:', error);
             tracklistContainer.innerHTML = createPlaceholder(`Could not load mix details. ${error.message}`);
+        }
+    }
+
+    _getLabelArtCache() {
+        if (!this._labelArtCache) {
+            try { this._labelArtCache = JSON.parse(localStorage.getItem('label_art_cache') || '{}'); }
+            catch { this._labelArtCache = {}; }
+        }
+        return this._labelArtCache;
+    }
+
+    _saveLabelArtCache() {
+        try { localStorage.setItem('label_art_cache', JSON.stringify(this._labelArtCache)); } catch {}
+    }
+
+    getSavedLabels() {
+        try {
+            const raw = JSON.parse(localStorage.getItem('saved_labels') || '[]');
+            // Deduplicate by name in case of prior bug accumulation
+            const byName = new Map();
+            for (const e of raw) {
+                const name = typeof e === 'object' ? e.name : e;
+                if (!byName.has(name)) byName.set(name, e);
+                else if (typeof e === 'object' && typeof byName.get(name) !== 'object') byName.set(name, e);
+            }
+            if (byName.size !== raw.length) {
+                const deduped = [...byName.values()];
+                localStorage.setItem('saved_labels', JSON.stringify(deduped));
+                return deduped;
+            }
+            return raw;
+        } catch { return []; }
+    }
+
+    _persistSavedLabels(labels) {
+        localStorage.setItem('saved_labels', JSON.stringify(labels));
+        // Sync to PocketBase in background if logged in
+        if (authManager.user) syncManager.setSavedLabels(labels).catch(() => {});
+    }
+
+    saveLabel(name, id = null) {
+        const saved = this.getSavedLabels();
+        const idx = saved.findIndex(e => typeof e === 'object' ? e.name === name : e === name);
+        if (idx === -1) {
+            saved.push({ name, ...(id ? { id } : {}), addedAt: Date.now() });
+        } else if (typeof saved[idx] !== 'object') {
+            saved[idx] = { name, ...(id ? { id } : {}), addedAt: Date.now() };
+        } else if (id && !saved[idx].id) {
+            saved[idx] = { ...saved[idx], id };
+        } else {
+            return;
+        }
+        this._persistSavedLabels(saved);
+    }
+
+    unsaveLabel(name) {
+        this._persistSavedLabels(this.getSavedLabels().filter(e =>
+            typeof e === 'object' ? e.name !== name : e !== name
+        ));
+    }
+
+    isLabelSaved(name) {
+        return this.getSavedLabels().some(e => typeof e === 'object' ? e.name === name : e === name);
+    }
+
+    async loadSavedLabelsFromCloud() {
+        if (!authManager.user) return;
+        try {
+            const cloud = await syncManager.getSavedLabels();
+            if (!cloud || !cloud.length) return;
+            // Cloud is authoritative — merge local-only entries that aren't in cloud
+            const local = this.getSavedLabels();
+            const byName = new Map();
+            // Cloud entries go in first (authoritative, may have ids)
+            for (const e of cloud) {
+                const name = typeof e === 'object' ? e.name : e;
+                byName.set(name, e);
+            }
+            // Add any local-only entries not present in cloud
+            for (const e of local) {
+                const name = typeof e === 'object' ? e.name : e;
+                if (!byName.has(name)) byName.set(name, e);
+            }
+            const merged = [...byName.values()];
+            localStorage.setItem('saved_labels', JSON.stringify(merged));
+            if (merged.length !== cloud.length) syncManager.setSavedLabels(merged).catch(() => {});
+        } catch { /* non-critical */ }
+    }
+
+    renderLabelsPage() {
+        this.showPage('labels');
+        const input = document.getElementById('labels-search-input');
+        const btn = document.getElementById('labels-search-btn');
+        const go = () => {
+            const q = input.value.trim();
+            if (!q) return;
+            const urlMatch = q.match(/play\.qobuz\.com\/label\/(\d+)/);
+            if (urlMatch) navigate(`/label-id/${urlMatch[1]}`);
+            else navigate(`/label/${encodeURIComponent(q)}`);
+        };
+        btn.onclick = go;
+        input.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+
+        const listEl = document.getElementById('saved-labels-list');
+        const rowsEl = document.getElementById('saved-labels-chips');
+        const sortEl = document.getElementById('saved-labels-sort');
+        const viewListBtn = document.getElementById('saved-labels-view-list');
+        const viewGridBtn = document.getElementById('saved-labels-view-grid');
+        const saved = this.getSavedLabels();
+
+        if (!saved.length) {
+            listEl.style.display = 'none';
+            input.focus();
+            return;
+        }
+
+        listEl.style.display = '';
+        const countEl = document.getElementById('saved-labels-count');
+        if (countEl) countEl.textContent = `${saved.length}`;
+
+        let currentView = localStorage.getItem('labels_view') || 'list';
+
+        const applyView = (view) => {
+            currentView = view;
+            localStorage.setItem('labels_view', view);
+            rowsEl.classList.toggle('view-grid', view === 'grid');
+            viewListBtn?.classList.toggle('active', view === 'list');
+            viewGridBtn?.classList.toggle('active', view === 'grid');
+        };
+
+        const sortList = () => {
+            const key = sortEl?.value || 'oldest';
+            return [...saved].sort((a, b) => {
+                const na = typeof a === 'object' ? a.name : a;
+                const nb = typeof b === 'object' ? b.name : b;
+                const ta = (typeof a === 'object' ? a.addedAt : 0) || 0;
+                const tb = (typeof b === 'object' ? b.addedAt : 0) || 0;
+                if (key === 'az') return na.toLowerCase().localeCompare(nb.toLowerCase());
+                if (key === 'za') return nb.toLowerCase().localeCompare(na.toLowerCase());
+                if (key === 'newest') return tb - ta;
+                return ta - tb; // oldest
+            });
+        };
+
+        const navigateToLabel = (name, id) => {
+            if (id) navigate(`/label-id/${id}`);
+            else navigate(`/label/${encodeURIComponent(name)}`);
+        };
+
+        // In-memory + localStorage cache for Discogs art, loaded once per session
+        const artCache = this._getLabelArtCache();
+        const saveArtCache = () => this._saveLabelArtCache();
+
+        const setImg = (el, src, imgClass, placeholderClass) => {
+            const ph = el.querySelector(`.${placeholderClass}`);
+            if (!ph) return;
+            const img = document.createElement('img');
+            img.className = imgClass;
+            img.src = src;
+            img.alt = '';
+            img.loading = 'lazy';
+            img.onerror = () => img.remove();
+            ph.replaceWith(img);
+        };
+
+        // Sequential fetch queue — one request at a time, 1s apart to stay under 60/min
+        const fetchQueue = [];
+        let fetchRunning = false;
+        const runQueue = async () => {
+            if (fetchRunning) return;
+            fetchRunning = true;
+            while (fetchQueue.length) {
+                const task = fetchQueue.shift();
+                await task();
+                await new Promise(r => setTimeout(r, 1050));
+            }
+            fetchRunning = false;
+        };
+
+        const queueCoverFetch = (el, name, id, imgClass, placeholderClass) => {
+            // Serve from cache immediately if available
+            if (artCache[name]) {
+                if (artCache[name] !== 'none') setImg(el, artCache[name], imgClass, placeholderClass);
+                return;
+            }
+            fetchQueue.push(async () => {
+                // Element may have been removed from DOM if user navigated away
+                if (!rowsEl.contains(el)) return;
+                try {
+                    const r = await fetch(`/.netlify/functions/label-art?name=${encodeURIComponent(name)}`);
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (d.thumb) {
+                            artCache[name] = d.thumb;
+                            saveArtCache();
+                            setImg(el, d.thumb, imgClass, placeholderClass);
+                            return;
+                        }
+                    }
+                } catch {}
+                // Fallback: first Qobuz album cover
+                if (id) {
+                    try {
+                        const r = await fetch(`/.netlify/functions/label?id=${id}&offset=0&limit=1`);
+                        if (r.ok) {
+                            const d = await r.json();
+                            const cover = d.albums?.[0]?.cover;
+                            if (cover) {
+                                const url = this.api.getCoverUrl(cover, '80');
+                                artCache[name] = url;
+                                saveArtCache();
+                                setImg(el, url, imgClass, placeholderClass);
+                                return;
+                            }
+                        }
+                    } catch {}
+                }
+                artCache[name] = 'none'; // mark as not found so we don't retry
+                saveArtCache();
+            });
+            runQueue();
+        };
+
+        const wireItem = (el, name, id, removeSelector, imgClass, placeholderClass) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest(removeSelector)) return;
+                navigateToLabel(name, id);
+            });
+            el.querySelector(removeSelector).addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.unsaveLabel(name);
+                this.renderLabelsPage();
+            });
+            queueCoverFetch(el, name, id, imgClass, placeholderClass);
+        };
+
+        const renderList = (list) => {
+            rowsEl.innerHTML = list.map(entry => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+                    <div class="label-row-cover"><div class="label-row-cover-placeholder">${SVG_DISC(14)}</div></div>
+                    <span class="label-row-name">${escapeHtml(name)}</span>
+                    ${!id ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
+                    <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
+                </div>`;
+            }).join('');
+            rowsEl.querySelectorAll('.label-row').forEach((row, i) => {
+                const entry = list[i];
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                wireItem(row, name, id, '.label-row-remove', 'label-row-cover-img', 'label-row-cover-placeholder');
+            });
+        };
+
+        const renderGrid = (list) => {
+            rowsEl.innerHTML = list.map(entry => {
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                return `<div class="label-card" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+                    <div class="label-card-cover-placeholder">${SVG_DISC(32)}</div>
+                    <div class="label-card-info"><div class="label-card-name">${escapeHtml(name)}</div></div>
+                    <button class="label-card-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
+                </div>`;
+            }).join('');
+            rowsEl.querySelectorAll('.label-card').forEach((card, i) => {
+                const entry = list[i];
+                const name = typeof entry === 'object' ? entry.name : entry;
+                const id = typeof entry === 'object' ? entry.id : null;
+                wireItem(card, name, id, '.label-card-remove', 'label-card-cover', 'label-card-cover-placeholder');
+            });
+        };
+
+        const render = () => {
+            const list = sortList();
+            if (currentView === 'grid') renderGrid(list);
+            else renderList(list);
+        };
+
+        applyView(currentView);
+        render();
+
+        if (sortEl) sortEl.onchange = render;
+        if (viewListBtn) viewListBtn.onclick = () => { applyView('list'); render(); };
+        if (viewGridBtn) viewGridBtn.onclick = () => { applyView('grid'); render(); };
+
+        input.focus();
+    }
+
+    async renderLabelPage(labelName, opts = {}) {
+        if (!opts.directId) {
+            const savedEntry = this.getSavedLabels().find(e =>
+                typeof e === 'object' && e.name === labelName && e.id
+            );
+            if (savedEntry) {
+                return this.renderLabelPage(labelName, { ...opts, directId: savedEntry.id });
+            }
+        }
+        this.showPage('label');
+
+        const nameEl = document.getElementById('label-detail-name');
+        const metaEl = document.getElementById('label-detail-meta');
+        const albumsContainer = document.getElementById('label-detail-albums');
+        const loadMoreBtn = document.getElementById('label-load-more');
+
+        nameEl.innerHTML = `<div class="skeleton" style="height: 48px; width: 300px; max-width: 90%;"></div>`;
+        metaEl.textContent = '';
+        albumsContainer.innerHTML = this.createSkeletonCards(12);
+        loadMoreBtn.style.display = 'none';
+
+        let nextOffset = 0;
+        const limit = 100;
+
+        const fetchPage = async (pageOffset) => {
+            const base = `/.netlify/functions/label`;
+            const qs = opts.directId
+                ? `?id=${opts.directId}&offset=${pageOffset}&limit=${limit}`
+                : `?name=${encodeURIComponent(labelName)}&offset=${pageOffset}&limit=${limit}`;
+            const url = base + qs;
+            const res = await fetch(url);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${res.status}`);
+            }
+            return res.json();
+        };
+
+        const renderAlbums = (albums, append = false) => {
+            const html = albums.map((a) => this.createAlbumCardHTML(a)).join('');
+            if (append) {
+                albumsContainer.insertAdjacentHTML('beforeend', html);
+            } else {
+                albumsContainer.innerHTML = html;
+            }
+            const playedAlbumIds = new Set(JSON.parse(localStorage.getItem('played-album-ids') || '[]'));
+            const currentAlbumId = this.player?.currentTrack?.album?.id ? String(this.player.currentTrack.album.id) : null;
+            albums.forEach((album) => {
+                const el = albumsContainer.querySelector(`[data-album-id="${album.id}"]`);
+                if (el) {
+                    trackDataStore.set(el, album);
+                    this.updateLikeState(el, 'album', album.id);
+                    const id = String(album.id);
+                    if (id === currentAlbumId) el.classList.add('album-playing');
+                    else if (playedAlbumIds.has(id)) el.classList.add('album-played');
+                }
+            });
+        };
+
+        try {
+            const data = await fetchPage(0);
+            nextOffset = data.nextOffset ?? limit;
+
+            const resolvedName = data.label?.name || labelName;
+            const resolvedId = data.label?.id || opts.directId || null;
+            nameEl.textContent = resolvedName;
+            document.title = `${resolvedName} — Monochrome`;
+
+            // If we resolved the label by name and got an ID back, rewrite the URL
+            // to the ID-based route so back/forward and refreshes use the stable ID.
+            if (resolvedId && !opts.directId && window.location.pathname.startsWith('/label/')) {
+                window.history.replaceState({}, '', `/label-id/${resolvedId}`);
+            }
+
+            // Wire save button
+            const saveBtn = document.getElementById('label-save-btn');
+            if (saveBtn) {
+                const updateSaveBtn = () => {
+                    const saved = this.isLabelSaved(resolvedName);
+                    saveBtn.title = saved ? 'Remove from saved' : 'Save label';
+                    saveBtn.innerHTML = saved ? SVG_BOOKMARK_CHECK(22) : SVG_BOOKMARK(22);
+                    saveBtn.style.opacity = saved ? '1' : '0.6';
+                };
+                updateSaveBtn();
+                saveBtn.onclick = () => {
+                    if (this.isLabelSaved(resolvedName)) this.unsaveLabel(resolvedName);
+                    else this.saveLabel(resolvedName, resolvedId);
+                    updateSaveBtn();
+                };
+            }
+
+            if (!data.albums.length) {
+                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">No albums from this label found.</p>`;
+                metaEl.textContent = 'No albums found';
+                return;
+            }
+
+            const formatMeta = (d) => `${d.total || d.albums?.length || 0} albums on Qobuz`;
+
+            renderAlbums(data.albums);
+            metaEl.textContent = formatMeta(data);
+
+            if (data.hasMore) {
+                loadMoreBtn.style.display = '';
+                loadMoreBtn.onclick = async () => {
+                    loadMoreBtn.disabled = true;
+                    loadMoreBtn.textContent = 'Loading…';
+                    try {
+                        const more = await fetchPage(nextOffset);
+                        nextOffset = more.nextOffset ?? (nextOffset + limit);
+                        renderAlbums(more.albums, true);
+                        metaEl.textContent = formatMeta(more);
+                        if (!more.hasMore || !more.albums.length) {
+                            loadMoreBtn.style.display = 'none';
+                        } else {
+                            loadMoreBtn.disabled = false;
+                            loadMoreBtn.textContent = 'Load more';
+                        }
+                    } catch (err) {
+                        loadMoreBtn.disabled = false;
+                        loadMoreBtn.textContent = 'Load more';
+                        console.error('Failed to load more label albums:', err);
+                    }
+                };
+            }
+        } catch (err) {
+            if (err.message.includes('not found') || err.message.includes('404')) {
+                // Name lookup failed — check if we have a saved ID for this label
+                const savedEntry = this.getSavedLabels().find(e =>
+                    typeof e === 'object' ? e.name === labelName : false
+                );
+                if (savedEntry?.id && !opts.directId) {
+                    // Retry with the stored ID instead
+                    return this.renderLabelPage(labelName, { ...opts, directId: savedEntry.id });
+                }
+                nameEl.textContent = labelName;
+                albumsContainer.innerHTML = `<p style="opacity: 0.6; padding: 1rem 0;">Label not found by name. <a href="/labels" style="color:var(--highlight);text-decoration:underline;" onclick="event.preventDefault();history.pushState(null,'','/labels');window.dispatchEvent(new PopStateEvent('popstate'))">Go to Labels</a> and paste the Qobuz label URL to re-save it with an ID.</p>`;
+                metaEl.textContent = '';
+            } else {
+                nameEl.textContent = labelName;
+                albumsContainer.innerHTML = `
+                    <div style="opacity: 0.6; padding: 1rem 0;">
+                        <p>Failed to load label catalog.</p>
+                        <button class="btn-secondary" id="label-retry-btn" style="margin-top: 0.5rem;">Retry</button>
+                    </div>`;
+                document.getElementById('label-retry-btn')?.addEventListener('click', () => this.renderLabelPage(labelName, opts));
+                metaEl.textContent = '';
+            }
+            console.error('renderLabelPage error:', err);
         }
     }
 
@@ -7877,7 +8344,10 @@ export class UIRenderer {
                 likeBtn.classList.toggle('active', isLiked);
             }
 
-            const albumRequest = track.album?.id ? this.api.getAlbum(track.album.id) : Promise.resolve({ tracks: [] });
+            const albumRequest =
+                track.album?.id && !String(track.album.id).startsWith('qobuz-')
+                    ? this.api.getAlbum(track.album.id)
+                    : Promise.resolve({ tracks: [] });
             const recommendationRequest = track.isLocal
                 ? Promise.resolve([])
                 : this.api.getRecommendedTracksForPlaylist([track], 12);

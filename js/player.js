@@ -13,6 +13,7 @@ import {
 } from './utils.js';
 import {
     queueManager,
+    qualityBadgeSettings,
     replayGainSettings,
     trackDateSettings,
     exponentialVolumeSettings,
@@ -614,6 +615,52 @@ export class Player {
                 console.warn('MediaSession action handlers not registered:', e);
             }
         }
+
+        // Android Auto bridge: allows MusicService.kt to trigger media actions via JS
+        window.androidTriggerMediaAction = (action, detailsJson) => {
+            const details = detailsJson ? JSON.parse(detailsJson) : null;
+            const handler = navigator.mediaSession._actionHandlers?.[action];
+            // Re-use the same action handlers already registered above
+            switch (action) {
+                case 'play': this.activeElement.play().catch(() => this.handlePlayPause()); break;
+                case 'pause': this.activeElement.pause(); break;
+                case 'stop': this.activeElement.pause(); this.activeElement.currentTime = 0; break;
+                case 'nexttrack': this.playNext(); break;
+                case 'previoustrack': this.playPrev(); break;
+                case 'seekto': if (details?.seekTime !== undefined) this.activeElement.currentTime = details.seekTime; break;
+                case 'seekforward': this.seekForward(details?.seekOffset || 10); break;
+                case 'seekbackward': this.seekBackward(details?.seekOffset || 10); break;
+            }
+        };
+
+        // Push playback state/metadata to AndroidBridge so MusicService can update Android Auto UI
+        const notifyAndroid = () => {
+            if (!window.AndroidBridge) return;
+            const el = this.activeElement;
+            window.AndroidBridge.onPlaybackStateChanged(el.paused ? 'paused' : 'playing');
+            if (el.duration && isFinite(el.duration)) {
+                window.AndroidBridge.onPositionStateChanged(JSON.stringify({
+                    duration: el.duration,
+                    position: el.currentTime,
+                    playbackRate: el.playbackRate || 1,
+                }));
+            }
+        };
+        const notifyAndroidPosition = () => {
+            if (!window.AndroidBridge) return;
+            const el = this.activeElement;
+            if (el.duration && isFinite(el.duration)) {
+                window.AndroidBridge.onPositionStateChanged(JSON.stringify({
+                    duration: el.duration,
+                    position: el.currentTime,
+                    playbackRate: el.playbackRate || 1,
+                }));
+            }
+        };
+        this.audio.addEventListener('play', notifyAndroid);
+        this.audio.addEventListener('pause', notifyAndroid);
+        this.audio.addEventListener('durationchange', notifyAndroid);
+        this.audio.addEventListener('timeupdate', notifyAndroidPosition);
     }
 
     setQuality(quality) {
@@ -2945,6 +2992,13 @@ export class Player {
 
             void audioContextManager.notifyBinauralChannelCount(2);
 
+            if (!qualityBadgeSettings.isEnabled()) {
+                if (badgeEl) badgeEl.style.display = 'none';
+                const staticBadge = titleEl.querySelector('.quality-badge:not(.shaka-quality-badge)');
+                if (staticBadge) staticBadge.style.display = 'none';
+                return;
+            }
+
             const badgeText = formatQualityBadgeText(this.currentStreamInfo, activeVariant, this.quality);
             if (badgeText) {
                 badgeEl.textContent = badgeText;
@@ -3101,6 +3155,16 @@ export class Player {
                 this.updateMediaSessionPlaybackState();
                 this.updateMediaSessionPositionState();
             });
+
+        if (window.AndroidBridge) {
+            const artworkUrl = coverId ? this.api.getCoverUrl(coverId, '1280') : '';
+            window.AndroidBridge.onMetadataChanged(JSON.stringify({
+                title: trackTitle || 'Unknown Title',
+                artist: getTrackArtists(track) || 'Unknown Artist',
+                album: track.album?.title || 'Unknown Album',
+                artworkUrl,
+            }));
+        }
     }
 
     updateMediaSessionPlaybackState() {

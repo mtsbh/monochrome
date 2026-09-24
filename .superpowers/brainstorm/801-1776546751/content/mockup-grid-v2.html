@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add to Playlist — Mockup v2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+    color: #f5f5f5;
+  }
+  .page-label {
+    color: #888;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+  .backdrop {
+    width: 100%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  .modal {
+    width: 100%;
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 16px;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.7);
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 0.9rem 0.9rem 0.7rem;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  .modal-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+  }
+  .modal-title { font-size: 0.85rem; font-weight: 600; color: #f5f5f5; }
+  .modal-close {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: #1f1f1f;
+    border: none;
+    color: #888;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .search-row { display: flex; gap: 0.4rem; align-items: center; }
+  .search-wrap { flex: 1; position: relative; }
+  .search-icon { position: absolute; left: 0.55rem; top: 50%; transform: translateY(-50%); color: #555; font-size: 0.8rem; }
+  .search-input {
+    width: 100%;
+    background: #1f1f1f;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 0.38rem 0.5rem 0.38rem 1.8rem;
+    color: #f5f5f5;
+    font-size: 0.78rem;
+    outline: none;
+  }
+  .search-input::placeholder { color: #555; }
+  .sort-select {
+    background: #1f1f1f;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 0.38rem 0.55rem;
+    color: #aaa;
+    font-size: 0.72rem;
+    cursor: pointer;
+    outline: none;
+  }
+  .create-new {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid #2a2a2a;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .create-new:hover { background: #1f1f1f; }
+  .create-icon {
+    width: 28px; height: 28px;
+    border-radius: 5px;
+    background: #1f1f1f;
+    border: 1px dashed #3a3a3a;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1rem;
+    color: #f5f5f5;
+    flex-shrink: 0;
+  }
+  .create-label { font-size: 0.8rem; font-weight: 600; color: #f5f5f5; }
+
+  .grid-scroll {
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 0.6rem;
+  }
+  .grid-scroll::-webkit-scrollbar { width: 3px; }
+  .grid-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  .playlist-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.4rem;
+  }
+
+  .playlist-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+  }
+  .playlist-card:hover { border-color: #555; background: #222; }
+  .playlist-card.already-in { opacity: 0.45; cursor: default; }
+  .playlist-card.already-in:hover { border-color: #2a2a2a; background: #1a1a1a; }
+
+  .card-cover {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+  }
+  .card-cover-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: linear-gradient(135deg, #1f1f1f, #2a2a2a);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+    color: #444;
+  }
+  .card-info { padding: 0.3rem 0.35rem 0.35rem; }
+  .card-name {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-count { font-size: 0.62rem; color: #666; margin-top: 1px; }
+
+  .already-badge {
+    position: absolute;
+    top: 3px; right: 3px;
+    background: rgba(0,0,0,0.8);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.58rem;
+    color: #aaa;
+    font-weight: 600;
+  }
+
+  .modal-footer {
+    padding: 0.5rem 0.9rem;
+    border-top: 1px solid #2a2a2a;
+    font-size: 0.7rem;
+    color: #555;
+    text-align: center;
+  }
+
+  .note { font-size: 0.75rem; color: #555; text-align: center; max-width: 360px; }
+</style>
+</head>
+<body>
+
+<p class="page-label">Mockup v2 — Smaller Grid (4 columns)</p>
+
+<div class="backdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title-row">
+        <span class="modal-title">Add to playlist</span>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="search-row">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="Search playlists…" />
+        </div>
+        <select class="sort-select">
+          <option>A–Z</option>
+          <option>Z–A</option>
+          <option>Date created</option>
+          <option>Recently used</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="create-new">
+      <div class="create-icon">+</div>
+      <span class="create-label">Create new playlist</span>
+    </div>
+
+    <div class="grid-scroll">
+      <div class="playlist-grid">
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder">🎵</div>
+          <div class="card-info"><div class="card-name">Chill Vibes</div><div class="card-count">34 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1a1a2e,#16213e)">🌙</div>
+          <div class="card-info"><div class="card-name">Late Night Drive</div><div class="card-count">21 tracks</div></div>
+        </div>
+
+        <div class="playlist-card already-in">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#2a1a1a,#3a2020)">🔥</div>
+          <div class="card-info"><div class="card-name">Workout</div><div class="card-count">58 tracks</div></div>
+          <span class="already-badge">✓</span>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1a2a1a,#203020)">🌿</div>
+          <div class="card-info"><div class="card-name">Focus Mode</div><div class="card-count">12 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#2a2a1a,#38360a)">☀️</div>
+          <div class="card-info"><div class="card-name">Summer</div><div class="card-count">47 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1a1a2e,#0f0f3a)">🎸</div>
+          <div class="card-info"><div class="card-name">Rock Classics</div><div class="card-count">29 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#2a1a2a,#3a1a3a)">💜</div>
+          <div class="card-info"><div class="card-name">Indie Mix</div><div class="card-count">19 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1a2a2a,#0a2a2a)">🌊</div>
+          <div class="card-info"><div class="card-name">Deep Focus</div><div class="card-count">8 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#2a1a1a,#2a0a0a)">❤️</div>
+          <div class="card-info"><div class="card-name">Favourites</div><div class="card-count">103 tracks</div></div>
+        </div>
+
+        <div class="playlist-card already-in">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1f1f1f,#2a2a2a)">🎹</div>
+          <div class="card-info"><div class="card-name">Piano</div><div class="card-count">15 tracks</div></div>
+          <span class="already-badge">✓</span>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#1a2a1a,#0a1a0a)">🎻</div>
+          <div class="card-info"><div class="card-name">Classical</div><div class="card-count">22 tracks</div></div>
+        </div>
+
+        <div class="playlist-card">
+          <div class="card-cover-placeholder" style="background:linear-gradient(135deg,#2a2a2a,#111)">🎤</div>
+          <div class="card-info"><div class="card-name">Rap</div><div class="card-count">41 tracks</div></div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="modal-footer">12 playlists · Type to filter</div>
+  </div>
+
+  <p class="note">4-column grid — 8 cards visible at once before scrolling. ✓ = already contains this track.</p>
+</div>
+
+</body>
+</html>

@@ -402,6 +402,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     new ThemeStore();
 
+    const helpBtn = document.getElementById('help-btn');
+    const helpModal = document.getElementById('help-modal');
+    const closeHelpModal = document.getElementById('close-help-modal');
+    const helpModalDone = document.getElementById('help-modal-done');
+    const helpModalOverlay = helpModal?.querySelector('.modal-overlay');
+
+    if (helpBtn && helpModal) {
+        helpBtn.addEventListener('click', () => {
+            helpModal.classList.add('active');
+            const iframe = helpModal.querySelector('iframe');
+            if (iframe && !iframe.src) {
+                iframe.src = iframe.dataset.src;
+            }
+        });
+
+        const hideHelpModal = () => {
+            helpModal.classList.remove('active');
+            const iframe = helpModal.querySelector('iframe');
+            if (iframe) iframe.src = '';
+        };
+
+        closeHelpModal?.addEventListener('click', hideHelpModal);
+        helpModalDone?.addEventListener('click', hideHelpModal);
+        helpModalOverlay?.addEventListener('click', hideHelpModal);
+    }
     try {
         await HiFiClient.initialize({
             storage: [
@@ -911,6 +936,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             openLyricsPanel(Player.instance.currentTrack, Player.instance.activeElement, lyricsManager);
         }
+    });
+
+    document.getElementById('now-playing-youtube-btn')?.addEventListener('click', () => {
+        const track = Player.instance.currentTrack;
+        if (!track) return;
+        const artist = track.artists?.[0]?.name ?? track.artist?.name ?? '';
+        const title = track.title ?? '';
+        const query = encodeURIComponent(`${artist} ${title}`.trim());
+        window.open(`https://www.youtube.com/results?search_query=${query}`, '_blank', 'noopener');
     });
 
     document.getElementById('download-current-btn')?.addEventListener('click', async () => {
@@ -2854,8 +2888,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     headerAccountImg.src = data.profile.avatar_url + '?s=100';
                     headerAccountImg.style.display = 'block';
                     headerAccountIcon.style.display = 'none';
-                    return;
                 }
+                // Sync saved labels from cloud to localStorage on login
+                UIRenderer.instance?.loadSavedLabelsFromCloud();
+                if (data && data.profile && data.profile.avatar_url) return;
             }
             headerAccountImg.style.display = 'none';
             headerAccountIcon.style.display = 'flex';

@@ -49,6 +49,7 @@ import {
     devModeSettings,
     serverDisruptionSettings,
 } from './storage.js';
+import { createQualityBadgeHTML, escapeHtml, getTrackTitle } from './utils.js';
 import { audioContextManager, getPresetsForBandCount } from './audio-context.js';
 import { calculateBiquadResponse, interpolate, getNormalizationOffset, runAutoEqAlgorithm } from './autoeq-engine.js';
 import { parseRawData, TARGETS, SPEAKER_TARGETS } from './autoeq-data.js';
@@ -1084,6 +1085,20 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             qualityBadgeSettings.setEnabled(e.target.checked);
             // Re-render queue if available, but don't force navigation to library
             if (window.renderQueueFunction) await window.renderQueueFunction();
+
+            if (player && player.currentTrack) {
+                const track = player.currentTrack;
+                const trackTitle = getTrackTitle(track);
+                const titleEl = document.querySelector('.now-playing-bar .title');
+                if (titleEl) {
+                    const qualityBadge = createQualityBadgeHTML(track);
+                    titleEl.innerHTML = `${escapeHtml(trackTitle)} ${qualityBadge}`;
+
+                    if (player.updateAdaptiveQualityBadge) {
+                        player.updateAdaptiveQualityBadge();
+                    }
+                }
+            }
         });
     }
 
@@ -7430,11 +7445,4 @@ function initializeBlockedContentManager() {
 
     // Initial render
     renderBlockedLists();
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }

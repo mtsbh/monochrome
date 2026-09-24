@@ -1,290 +1,54 @@
 // js/accounts/auth.js
-import { AUTH_BASE_URL, authClient } from './config.js';
-
-const LEGACY_AUTH_TOKEN_KEY = 'monochrome-auth-token';
-const NATIVE_OAUTH_HANDLED_URLS_KEY = 'monochrome-native-oauth-handled-urls';
-const NATIVE_OAUTH_SCHEME = 'monochrome';
-const NATIVE_OAUTH_HOST = 'auth-callback';
-let authToken = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) || '';
-
-function normalizeUser(user) {
-    if (!user) return null;
-    return { ...user, $id: user.id };
-}
-
-export function getAuthToken() {
-    return authToken;
-}
-
-function storeAuthToken(token) {
-    authToken = token || '';
-    if (authToken) localStorage.setItem(LEGACY_AUTH_TOKEN_KEY, authToken);
-    else localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-}
-
-function clearAuthToken() {
-    authToken = '';
-    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-}
-
-function isCapacitorNative() {
-    return !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() !== 'web');
-}
-
-function getCapacitorPlugin(name) {
-    return window.Capacitor?.Plugins?.[name];
-}
-
-async function getBrowserPlugin() {
-    const plugin = getCapacitorPlugin('Browser');
-    if (plugin?.open) return plugin;
-
-    try {
-        const { Browser } = await import('@capacitor/browser');
-        return Browser;
-    } catch {
-        return plugin;
-    }
-}
-
-async function getAppPlugin() {
-    const plugin = getCapacitorPlugin('App');
-    if (plugin?.addListener) return plugin;
-
-    try {
-        const { App } = await import('@capacitor/app');
-        return App;
-    } catch {
-        return plugin;
-    }
-}
-
-function getNativeOAuthCallbackURL() {
-    return `${AUTH_BASE_URL}/api/native/oauth/callback`;
-}
-
-function getOAuthParams(urlString = window.location.href) {
-    let url;
-    try {
-        url = new URL(urlString);
-    } catch {
-        return null;
-    }
-
-    const params = new URLSearchParams(url.search);
-    if (!params.size && url.hash?.startsWith('#')) {
-        const hashParams = new URLSearchParams(url.hash.slice(1));
-        if (hashParams.size) return hashParams;
-    }
-    return params;
-}
-
-function hasOAuthParams(params) {
-    return !!(params && (params.has('oauth') || params.has('userId') || params.has('secret') || params.has('error')));
-}
-
-function getHandledNativeOAuthUrls() {
-    try {
-        const urls = JSON.parse(sessionStorage.getItem(NATIVE_OAUTH_HANDLED_URLS_KEY) || '[]');
-        return Array.isArray(urls) ? urls : [];
-    } catch {
-        return [];
-    }
-}
-
-function wasNativeOAuthUrlHandled(url) {
-    return getHandledNativeOAuthUrls().includes(url);
-}
-
-function markNativeOAuthUrlHandled(url) {
-    if (!url) return;
-    const urls = getHandledNativeOAuthUrls().filter((value) => value !== url);
-    urls.unshift(url);
-    sessionStorage.setItem(NATIVE_OAUTH_HANDLED_URLS_KEY, JSON.stringify(urls.slice(0, 10)));
-}
-
-function getNativeOAuthError(params) {
-    if (!params?.has('error')) return null;
-    const error = params.get('error') || 'unknown_error';
-    const description = params.get('error_description');
-    return description ? `${error}: ${description}` : error;
-}
-
-function getErrorMessage(data, fallback) {
-    if (data?.error?.message) return data.error.message;
-    if (typeof data?.error === 'string') return data.error;
-    if (data?.message) return data.message;
-    if (typeof data === 'string' && data.trim()) return data;
-    return fallback;
-}
-
-function findOAuthUrl(data, response) {
-    const candidates = [
-        data?.url,
-        data?.data?.url,
-        data?.redirectURL,
-        data?.redirectUrl,
-        data?.data?.redirectURL,
-        data?.data?.redirectUrl,
-        response?.redirected ? response.url : null,
-    ];
-
-    return candidates.find((value) => typeof value === 'string' && /^https?:\/\//i.test(value));
-}
-
-async function readAuthResponse(response) {
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) return response.json();
-
-    const text = await response.text();
-    if (!text) return null;
-
-    try {
-        return JSON.parse(text);
-    } catch {
-        return text;
-    }
-}
-async function openNativeOAuthUrl(url) {
-    const Browser = await getBrowserPlugin();
-    if (Browser?.open) {
-        await Browser.open({ url, presentationStyle: 'fullscreen' });
-        return;
-    }
-
-    const opened = window.open(url, '_system');
-    if (!opened) {
-        window.location.href = url;
-    }
-}
-
-async function closeNativeOAuthBrowser() {
-    try {
-        await (await getBrowserPlugin())?.close?.();
-    } catch {
-        // Browser.close throws on Android when no custom tab is active.
-    }
-}
-
-async function getSessionFromBearerToken() {
-    const token = getAuthToken();
-    if (!token) return null;
-
-    const response = await fetch(`${AUTH_BASE_URL}/api/me`, {
-        credentials: 'include',
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    if (response.status === 401) {
-        clearAuthToken();
-        return null;
-    }
-    if (!response.ok) throw new Error(`Session check failed: ${response.status}`);
-    return response.json();
-}
-
-async function getCurrentSession() {
-    if (isCapacitorNative() && getAuthToken()) {
-        return getSessionFromBearerToken();
-    }
-
-    const { data: session } = await authClient.getSession();
-    if (session?.user) return session;
-
-    return getSessionFromBearerToken();
-}
+import { pb } from './config.js';
 
 export class AuthManager {
     constructor() {
         this.user = null;
         this.authListeners = [];
-        this.authRefreshId = 0;
-        this.setupNativeOAuthListener().catch(console.error);
         this.init().catch(console.error);
     }
 
     async init() {
-        const params = getOAuthParams();
-        if (this.applyOAuthParams(params)) {
-            window.history.replaceState({}, '', window.location.pathname);
+        // PocketBase handles persistence automatically via pb.authStore.
+        // We just need to check if we are logged in.
+        if (pb.authStore.isValid) {
+            this.user = {
+                $id: pb.authStore.model.id,
+                email: pb.authStore.model.email,
+                name: pb.authStore.model.name || pb.authStore.model.username
+            };
+            this.updateUI(this.user);
+            this.notifyListeners(this.user);
+        } else {
+            // Handle OAuth2 callback if we are coming back from Google
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('oauth')) {
+                // PocketBase doesn't strictly need us to do anything here if using popups,
+                // but if using redirects, we'd handle it. 
+                // For now, let's assume we're using the standard flow.
+                window.history.replaceState({}, '', window.location.pathname);
+            }
+            this.updateUI(null);
         }
-
-        await this.refreshAuthState();
+        
+        // Listen to auth changes (login/logout from other tabs or same tab)
+        pb.authStore.onChange((token, model) => {
+            if (model) {
+                this.user = {
+                    $id: model.id,
+                    email: model.email,
+                    name: model.name || model.username
+                };
+            } else {
+                this.user = null;
+            }
+            this.updateUI(this.user);
+            this.notifyListeners(this.user);
+        }, true);
     }
 
-    applyOAuthParams(params) {
-        if (!hasOAuthParams(params)) return false;
-
-        const nativeOAuthError = getNativeOAuthError(params);
-        if (nativeOAuthError) {
-            console.error('Native OAuth failed:', nativeOAuthError);
-            alert(`Login failed: ${nativeOAuthError}`);
-            return true;
-        }
-
-        if (params.has('secret')) {
-            storeAuthToken(params.get('secret'));
-        }
-        return true;
-    }
-
-    setUser(user) {
-        this.user = normalizeUser(user);
-        this.updateUI(this.user);
-        this.authListeners.forEach((listener) => listener(this.user));
-    }
-
-    async refreshAuthState() {
-        const refreshId = ++this.authRefreshId;
-        const applyUser = (user) => {
-            if (refreshId !== this.authRefreshId) return false;
-            this.setUser(user);
-            return true;
-        };
-
-        try {
-            const session = await getCurrentSession();
-            applyUser(session?.user);
-        } catch (error) {
-            if (refreshId !== this.authRefreshId) return;
-            console.warn('Session check failed:', error);
-            this.setUser(null);
-        }
-    }
-
-    async setupNativeOAuthListener() {
-        if (!isCapacitorNative()) return;
-
-        const App = await getAppPlugin();
-        if (!App?.addListener) return;
-
-        App.addListener('appUrlOpen', async (event) => {
-            await this.handleNativeOAuthCallback(event?.url);
-        });
-
-        const launchEvent = await App.getLaunchUrl?.();
-        if (launchEvent?.url) this.handleNativeOAuthCallback(launchEvent.url);
-    }
-
-    async handleNativeOAuthCallback(url) {
-        if (!url || wasNativeOAuthUrlHandled(url)) return false;
-
-        const params = getOAuthParams(url);
-        if (!hasOAuthParams(params)) return false;
-
-        markNativeOAuthUrlHandled(url);
-        await closeNativeOAuthBrowser();
-
-        const shouldReload = params.has('secret') && !params.has('error');
-        this.applyOAuthParams(params);
-        window.history.replaceState({}, '', window.location.pathname);
-
-        if (shouldReload) {
-            window.location.reload();
-            return true;
-        }
-
-        await this.refreshAuthState();
-        return true;
+    notifyListeners(user) {
+        this.authListeners.forEach((listener) => listener(user));
     }
 
     onAuthStateChanged(callback) {
@@ -294,62 +58,78 @@ export class AuthManager {
         }
     }
 
-    async _signInSocial(provider) {
+    async signInWithGoogle() {
         try {
-            const isNative = isCapacitorNative();
-            const callbackURL = isNative ? getNativeOAuthCallbackURL() : window.location.origin + '/index.html';
-            const errorCallbackURL = callbackURL;
-
-            if (isNative) {
-                const res = await fetch(`${AUTH_BASE_URL}/api/auth/sign-in/social`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ provider, callbackURL, errorCallbackURL, disableRedirect: true }),
-                    credentials: 'include',
-                });
-                const data = await readAuthResponse(res);
-                const oauthUrl = findOAuthUrl(data, res);
-                if (oauthUrl) {
-                    await openNativeOAuthUrl(oauthUrl);
-                    return;
-                }
-                if (!res.ok || data?.error || data?.message) {
-                    throw new Error(getErrorMessage(data, `OAuth URL fetch failed (${res.status})`));
-                }
-                throw new Error(`Unexpected response from auth server: ${JSON.stringify(data)}`);
-            }
-
-            await authClient.signIn.social({
-                provider,
-                callbackURL: window.location.origin + '/index.html',
-                errorCallbackURL: window.location.origin + '/index.html',
-            });
+            // This will redirect to Google
+            await pb.collection('users').authWithOAuth2({ provider: 'google' });
+            // After successful login, the authStore is updated automatically
         } catch (error) {
             console.error('Login failed:', error);
             alert(`Login failed: ${error.message}`);
         }
     }
 
-    async signInWithGoogle() {
-        return this._signInSocial('google');
-    }
     async signInWithGitHub() {
-        return this._signInSocial('github');
+        try {
+            await pb.collection('users').authWithOAuth2({ provider: 'github' });
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+        }
     }
+
     async signInWithDiscord() {
-        return this._signInSocial('discord');
+        try {
+            await pb.collection('users').authWithOAuth2({ provider: 'discord' });
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+        }
+    }
+
+    async signInWithGitHub() {
+        try {
+            auth.createOAuth2Session(
+                'github',
+                window.location.origin + '/index.html?oauth=1',
+                window.location.origin + '/login.html'
+            );
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+        }
+    }
+
+    async signInWithSpotify() {
+        try {
+            auth.createOAuth2Session(
+                'spotify',
+                window.location.origin + '/index.html?oauth=1',
+                window.location.origin + '/login.html'
+            );
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+        }
+    }
+
+    async signInWithDiscord() {
+        try {
+            auth.createOAuth2Session(
+                'discord',
+                window.location.origin + '/index.html?oauth=1',
+                window.location.origin + '/login.html'
+            );
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+        }
     }
 
     async signInWithEmail(email, password) {
         try {
-            const { data, error } = await authClient.signIn.email({ email, password });
-            if (error) throw new Error(error.message);
-
-            storeAuthToken(data?.token);
-            this.user = normalizeUser(data.user);
-            this.updateUI(this.user);
-            this.authListeners.forEach((listener) => listener(this.user));
-            return this.user;
+            const authData = await pb.collection('users').authWithPassword(email, password);
+            return authData.record;
         } catch (error) {
             console.error('Email Login failed:', error);
             alert(`Login failed: ${error.message}`);
@@ -359,18 +139,12 @@ export class AuthManager {
 
     async signUpWithEmail(email, password) {
         try {
-            const { data, error } = await authClient.signUp.email({
+            await pb.collection('users').create({
                 email,
                 password,
-                name: email.split('@')[0],
+                passwordConfirm: password,
             });
-            if (error) throw new Error(error.message);
-
-            storeAuthToken(data?.token);
-            this.user = normalizeUser(data.user);
-            this.updateUI(this.user);
-            this.authListeners.forEach((listener) => listener(this.user));
-            return this.user;
+            return await this.signInWithEmail(email, password);
         } catch (error) {
             console.error('Sign Up failed:', error);
             alert(`Sign Up failed: ${error.message}`);
@@ -380,11 +154,7 @@ export class AuthManager {
 
     async sendPasswordReset(email) {
         try {
-            const { error } = await authClient.requestPasswordReset({
-                email,
-                redirectTo: window.location.origin + '/reset-password',
-            });
-            if (error) throw new Error(error.message);
+            await pb.collection('users').requestPasswordReset(email);
             alert(`Password reset email sent to ${email}`);
         } catch (error) {
             console.error('Password reset failed:', error);
@@ -393,35 +163,21 @@ export class AuthManager {
         }
     }
 
-    async resetPassword(token, password, confirmPassword) {
-        if (password !== confirmPassword) {
-            throw new Error('Passwords do not match');
-        }
-        try {
-            const { error } = await authClient.resetPassword({ newPassword: password, token });
-            if (error) throw new Error(error.message);
-        } catch (error) {
-            console.error('Password reset failed:', error);
-            throw error;
-        }
-    }
-
     async signOut() {
         try {
-            await authClient.signOut();
-        } catch (error) {
-            console.error('Remote logout failed:', error);
-        } finally {
-            clearAuthToken();
+            pb.authStore.clear();
             this.user = null;
             this.updateUI(null);
-            this.authListeners.forEach((listener) => listener(null));
+            this.notifyListeners(null);
 
             if (window.__AUTH_GATE__) {
                 window.location.href = '/login';
             } else {
                 window.location.reload();
             }
+        } catch (error) {
+            console.error('Logout failed:', error);
+            throw error;
         }
     }
 
@@ -470,6 +226,7 @@ export class AuthManager {
             return;
         }
 
+
         if (user) {
             connectBtn.textContent = 'Sign Out';
             connectBtn.classList.add('danger');
@@ -481,6 +238,13 @@ export class AuthManager {
             if (githubBtn) githubBtn.style.display = 'none';
             if (discordBtn) discordBtn.style.display = 'none';
             if (statusText) statusText.textContent = `Signed in as ${user.email}`;
+            
+            // Hide custom DB button if it's already set from environment
+            const customDbBtn = document.getElementById('custom-db-btn');
+            if (customDbBtn && window.__POCKETBASE_URL__) {
+                const settingItem = customDbBtn.closest('.setting-item');
+                if (settingItem) settingItem.style.display = 'none';
+            }
         } else {
             connectBtn.textContent = 'Connect with Google';
             connectBtn.classList.remove('danger');
@@ -502,3 +266,9 @@ export class AuthManager {
 }
 
 export const authManager = new AuthManager();
+
+// Compatibility shim for upstream's authApi helper, which expects a bearer token
+// getter. We authenticate via PocketBase, so expose its stored token.
+export function getAuthToken() {
+    return pb.authStore?.token || null;
+}

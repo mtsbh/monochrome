@@ -18,7 +18,7 @@ export function cleanString(str) {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .replace(/\b(feat|featuring|ft)\.?\s+.*$/i, '')
-        .replace(/[\(\[\{].*?[\)\]\}]/g, '')
+        .replace(/[([{].*?[)\]}]/g, '')
         .replace(/[^a-z0-9]/g, '')
         .trim();
 }

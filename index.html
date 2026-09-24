@@ -4,9 +4,8 @@
         <meta charset="UTF-8" />
         <meta name="referrer" content="no-referrer" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-        <title>Monochrome</title>
-        <link rel="canonical" href="https://monochrome.tf/" />
-        <link rel="alternate" hreflang="en" href="https://monochrome.tf/" />
+        <title>Monochrome Music</title>
+        <link rel="canonical" href="https://monochromek.netlify.app/" />
         <meta name="theme-color" content="#000000" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1085,14 +1084,35 @@
 
         <div id="playlist-select-modal" class="modal">
             <div class="modal-overlay"></div>
-            <div class="modal-content">
-                <h3>Add to Playlist</h3>
-                <div id="playlist-select-list" class="modal-list">
-                    <!-- Options will be injected here -->
+            <div class="modal-content medium">
+                <div class="playlist-select-header">
+                    <div class="playlist-select-title-row">
+                        <span class="playlist-select-title">Add to playlist</span>
+                        <button id="playlist-select-close" class="playlist-select-close">&times;</button>
+                    </div>
+                    <div class="playlist-select-controls">
+                        <div class="playlist-select-search-wrap">
+                            <span class="playlist-select-search-icon"></span>
+                            <input id="playlist-select-search" class="playlist-select-search" placeholder="Search playlists…" autocomplete="off" />
+                        </div>
+                        <select id="playlist-select-sort" class="playlist-select-sort">
+                            <option value="az">A–Z</option>
+                            <option value="za">Z–A</option>
+                            <option value="date">Date created</option>
+                            <option value="recent">Recently used</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="modal-actions">
-                    <button id="playlist-select-cancel" class="btn-secondary">Cancel</button>
+                <div id="playlist-select-create" class="playlist-select-create">
+                    <div class="playlist-select-create-icon">+</div>
+                    <span class="playlist-select-create-label">Create new playlist</span>
                 </div>
+                <div class="playlist-select-scroll">
+                    <div id="playlist-select-grid" class="playlist-select-grid">
+                        <!-- Cards injected by JS -->
+                    </div>
+                </div>
+                <div id="playlist-select-footer" class="playlist-select-footer"></div>
             </div>
         </div>
 
@@ -1697,6 +1717,33 @@
             </div>
         </div>
 
+        <div id="help-modal" class="modal">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem">
+                    <h3 style="margin: 0">Monochrome Help</h3>
+                    <button class="close-modal-btn" id="close-help-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground);">&times;</button>
+                </div>
+                <div id="help-video-container" style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; background: #000; border-radius: var(--radius);">
+                     <iframe
+                        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
+                        data-src="https://m.samidy.xyz/monochrome-help.mp4"
+                        title="Monochrome Help"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowfullscreen>
+                    </iframe>
+                </div>
+                <p style="margin-top: 1rem; text-align: center; color: var(--muted-foreground); font-size: 0.9rem;">
+                    thank you to community member valerie for making this video!
+                </p>
+                <div class="modal-actions" style="justify-content: center">
+                    <button id="help-modal-done" class="btn-primary">Done</button>
+                </div>
+            </div>
+        </div>
+
+
         <div id="sidebar-overlay"></div>
 
         <div id="csv-import-progress" class="csv-import-progress" style="display: none">
@@ -1725,7 +1772,7 @@
             <aside class="sidebar">
                 <div class="sidebar-content">
                     <div class="sidebar-logo">
-                        <a href="./" class="sidebar-logo-link">
+                        <a href="/" class="sidebar-logo-link">
                             <use svg="./images/monochrome_logo.svg" size="200" class="app-logo" />
                             <span>Monochrome</span>
                         </a>
@@ -1751,6 +1798,12 @@
                                 <a href="/library">
                                     <use svg="!lucide/library.svg" size="24" />
                                     <span>Library</span>
+                                </a>
+                            </li>
+                            <li class="nav-item" id="sidebar-nav-labels">
+                                <a href="/labels">
+                                    <use svg="!lucide/tag.svg" size="24" />
+                                    <span>Labels</span>
                                 </a>
                             </li>
                             <li class="nav-item" id="sidebar-nav-recent">
@@ -2728,6 +2781,58 @@
                     </header>
                     <div id="mix-detail-tracklist" class="track-list"></div>
                 </section>
+
+                <div id="page-labels" class="page">
+                    <header class="detail-header" style="align-items: flex-start; padding-bottom: 1.5rem;">
+                        <div class="detail-header-info" style="width: 100%;">
+                            <h1 class="title">Labels</h1>
+                            <div style="margin-top: 1rem; display: flex; gap: 0.5rem; max-width: 480px;">
+                                <input id="labels-search-input" class="search-input" type="text" placeholder="Label name or Qobuz URL…" style="flex: 1;" />
+                                <button id="labels-search-btn" class="btn-primary">Browse</button>
+                            </div>
+                            <div id="saved-labels-list" style="margin-top: 2rem; display: none;">
+                                <div class="saved-labels-toolbar">
+                                    <span class="saved-labels-title">Saved labels <span id="saved-labels-count" class="saved-labels-count"></span></span>
+                                    <div class="saved-labels-controls">
+                                        <select id="saved-labels-sort" class="saved-labels-sort-select">
+                                            <option value="oldest">Oldest first</option>
+                                            <option value="newest">Newest first</option>
+                                            <option value="az">A – Z</option>
+                                            <option value="za">Z – A</option>
+                                        </select>
+                                        <div class="saved-labels-view-toggle">
+                                            <button id="saved-labels-view-list" class="view-toggle-btn active" title="List view">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                            </button>
+                                            <button id="saved-labels-view-grid" class="view-toggle-btn" title="Grid view">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="saved-labels-chips" class="saved-labels-rows"></div>
+                            </div>
+                        </div>
+                    </header>
+                </div>
+
+                <div id="page-label" class="page">
+                    <header class="detail-header" style="align-items: flex-start; padding-bottom: 1.5rem;">
+                        <div class="detail-header-info" style="width: 100%;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <h1 class="title" id="label-detail-name"></h1>
+                                <button id="label-save-btn" class="btn-icon" title="Save label" style="flex-shrink: 0;" aria-label="Save label"></button>
+                            </div>
+                            <div class="meta" id="label-detail-meta"></div>
+                        </div>
+                    </header>
+                    <section class="content-section">
+                        <div class="card-grid" id="label-detail-albums"></div>
+                        <div style="text-align: center; margin-top: 1.5rem;">
+                            <button id="label-load-more" class="btn-secondary" style="display: none;">Load more</button>
+                        </div>
+                    </section>
+                </div>
 
                 <div id="page-artist" class="page">
                     <header class="detail-header">
@@ -6089,7 +6194,8 @@
                             <p style="text-align: center" class="donate-description">
                                 If Monochrome has been useful to you and you're able to, consider making a donation.
                                 <br />
-                                It helps pay for the server and domain, and you get to support us :)
+                                It helps pay for the server and domain, and you get to support us.
+                                <br />
                             </p>
                             <div
                                 class="donate-button"
@@ -6224,7 +6330,7 @@
                         <h2 class="section-title donate-page-title">Support Monochrome</h2>
                         <p class="donate-page-desc">
                             If Monochrome has been useful to you and you're able to, consider making a donation. It
-                            helps pay for the server and domain, and you get to support us :)
+                            helps pay for the server and domain, and you get to support us.
                         </p>
                         <div class="donate-goal-card">
                             <div class="donate-goal-card-header">
@@ -6825,6 +6931,14 @@
                             title="Save to Favorites"
                             style="display: none"
                         ></button>
+                        <button
+                            id="now-playing-youtube-btn"
+                            title="Search on YouTube"
+                            class="desktop-only"
+                            aria-label="Search on YouTube"
+                        >
+                            <use svg="!lucide/youtube.svg" size="20" />
+                        </button>
                         <button
                             id="now-playing-add-playlist-btn"
                             title="Add to playlist"

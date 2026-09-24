@@ -2,11 +2,21 @@
 import { getTrackArtists } from './utils.js';
 import { loadProfile } from './profile.js';
 
+// Capture native pushState before analytics scripts (e.g. Plausible) patch it.
+// Plausible monkey-patches history.pushState to fire analytics events, and when
+// an ad blocker blocks those requests the patched version may fail silently and
+// never call the real pushState, breaking all SPA navigation.
+const nativePushState = window.history.pushState.bind(window.history);
+
 export function navigate(path) {
     if (path === window.location.pathname) {
         return;
     }
-    window.history.pushState({}, '', path);
+    try {
+        nativePushState({}, '', path);
+    } catch (e) {
+        // ignore — still dispatch popstate so routing works
+    }
     window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
@@ -63,7 +73,11 @@ export function createRouter(ui) {
                 break;
             case 'album': {
                 const { provider, id } = extractProviderAndId(param);
-                await ui.renderAlbumPage(id, provider);
+                if (id.startsWith('qobuz-')) {
+                    await ui.renderAlbumPage(id.slice(6), 'qobuz');
+                } else {
+                    await ui.renderAlbumPage(id, provider);
+                }
                 break;
             }
             case 'artist': {
@@ -71,6 +85,15 @@ export function createRouter(ui) {
                 await ui.renderArtistPage(id, provider);
                 break;
             }
+            case 'labels':
+                await ui.renderLabelsPage();
+                break;
+            case 'label':
+                await ui.renderLabelPage(decodeURIComponent(param));
+                break;
+            case 'label-id':
+                await ui.renderLabelPage(param, { directId: parseInt(param, 10) });
+                break;
             case 'playlist': {
                 const { provider, id } = extractProviderAndId(param);
                 await ui.renderPlaylistPage(id, 'api', provider);

@@ -9,7 +9,12 @@ import {
     normalizeAppleArtist,
     normalizeAppleSearchResults,
 } from './apple-music-api.js';
-import { TracksStreamerAPI, tracksStreamerAPI, normalizeTracksSearchResults } from './tracks-api.js';
+import {
+    TRACKS_API_BASE_URL,
+    TracksStreamerAPI,
+    tracksStreamerAPI,
+    normalizeTracksSearchResults,
+} from './tracks-api.js';
 import { getCommunityPlaylist } from './community-playlists.js';
 
 /**
@@ -83,6 +88,11 @@ export class MusicAPI {
         this.tracksArtistIds = new Set();
         this.tracksAlbumIds = new Set();
         this.tracksPlaylistIds = new Set();
+        this.qobuzIsrcCache = new Map();
+    }
+
+    registerQobuzTrack(id, isrc) {
+        if (isrc) this.qobuzIsrcCache.set(id, isrc);
     }
 
     static async initialize(settings) {
@@ -322,6 +332,9 @@ export class MusicAPI {
     }
 
     async getAlbum(id, provider = null) {
+        if (typeof id === 'string' && id.startsWith('qobuz-')) {
+            throw new Error(`getAlbum not supported for Qobuz-only albums (${id})`);
+        }
         if (this.isTracksId(id, 'album', provider) || this.tracksAlbumIds.has(String(id))) {
             const tracksId = this.getTracksId(id, 'album');
             if (this.tracksAlbumCache.has(String(tracksId))) return this.tracksAlbumCache.get(String(tracksId));
@@ -487,22 +500,26 @@ export class MusicAPI {
 
     // Stream methods
     async getStreamUrl(id, quality, options = {}) {
+        if (typeof id === 'string' && id.startsWith('qobuz-')) {
+            const isrc = this.qobuzIsrcCache.get(id);
+            if (isrc) {
+                const result = await this.tidalAPI.getQobuzStreamUrl(isrc, quality);
+                if (result && result.url) return result;
+            }
+            // No ISRC cached — play directly by Qobuz track ID
+            const qobuzTrackId = id.slice('qobuz-'.length);
+            const result = await this.tidalAPI.getQobuzStreamUrlByTrackId(qobuzTrackId, quality);
+            if (result && result.url) return result;
+            throw new Error(`Could not stream Qobuz track ${id}: no ISRC and direct fetch failed`);
+        }
         let track = options?.track || this.getCachedTracksTrack(id) || this.getCachedAppleTrack(id);
 
         if (!track && (this.isTracksId(id) || this.isAppleId(id) || /^\d{17,20}$/.test(String(id)))) {
             track = await this.getTrackMetadata(id).catch(() => null);
         }
 
-        const stream = await this.tracksStreamerAPI.resolveTrackStream(id, quality, {
-            ...options,
-            track,
-        });
-        if (stream?.url) {
-            return stream;
-        }
-
-        const cleanId = this.getTracksId(id);
-        return this.tracksStreamerAPI.getStreamUrl(cleanId, quality, { track });
+        // tracks.monochrome.st first, then the fork's fallback chain (see LosslessAPI.getStreamUrl).
+        return this.tidalAPI.getStreamUrl(id, quality, { ...options, track });
     }
 
     usesSingleUsePlaybackUrls() {

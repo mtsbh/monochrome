@@ -287,6 +287,7 @@ export class MusicDatabase {
         const base = {
             id: item.id,
             addedAt: item.addedAt || null,
+            isSynced: item.isSynced || false,
         };
 
         if (normalizedType === 'track') {
@@ -382,6 +383,7 @@ export class MusicDatabase {
                 image: item.image || item.squareImage || item.cover || null,
                 numberOfTracks: item.numberOfTracks || (item.tracks ? item.tracks.length : 0),
                 user: item.user ? { name: item.user.name || null } : null,
+                isSynced: item.isSynced || false,
             };
         }
 
@@ -394,6 +396,7 @@ export class MusicDatabase {
                 description: item.description,
                 mixType: item.mixType,
                 cover: item.cover,
+                isSynced: item.isSynced || false,
             };
         }
 

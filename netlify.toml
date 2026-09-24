@@ -1,0 +1,38 @@
+[build]
+  command = "npm run build:netlify"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
+
+[[edge_functions]]
+  path = "/api/audio-proxy"
+  function = "audio-proxy"
+
+[[redirects]]
+  from = "/api/label"
+  to = "/.netlify/functions/label"
+  status = 200
+
+[[redirects]]
+  from = "/api/contributors"
+  to = "/.netlify/functions/contributors"
+  status = 200
+
+[[redirects]]
+  from = "/api/get-music"
+  to = "/.netlify/functions/qobuz-stream"
+  status = 200
+
+[[redirects]]
+  from = "/api/download-music"
+  to = "/.netlify/functions/qobuz-stream"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -269,6 +269,7 @@ export function initializeUIInteractions(player, api, ui) {
     const renderQueueItemHTML = (track, index) => {
         if (contentBlockingSettings?.isHardcodedBlockedTrack(track)) return '';
         const isPlaying = index === player.currentQueueIndex;
+        const isPlayed = index < player.currentQueueIndex;
         const isBlocked = contentBlockingSettings?.shouldHideTrack(track);
         const trackTitle = getTrackTitle(track);
         const trackArtists = getTrackArtists(track, { fallback: 'Unknown' });
@@ -301,7 +302,7 @@ export function initializeUIInteractions(player, api, ui) {
             isVideo && track.imageId ? api.getVideoCoverUrl(track.imageId) : api.getCoverUrl(track.album?.cover);
 
         return `
-        <div class="queue-track-item ${isPlaying ? 'playing' : ''} ${isBlocked ? 'blocked' : ''}" data-queue-index="${index}" data-track-id="${track.id}" draggable="${isBlocked ? 'false' : 'true'}" ${blockedTitle}>
+        <div class="queue-track-item ${isPlaying ? 'playing' : ''} ${isPlayed ? 'played' : ''} ${isBlocked ? 'blocked' : ''}" data-queue-index="${index}" data-track-id="${track.id}" draggable="${isBlocked ? 'false' : 'true'}" ${blockedTitle}>
             <div class="drag-handle">
                 ${SVG_EQUAL(16)}
             </div>

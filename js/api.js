@@ -155,7 +155,7 @@ export class LosslessAPI {
                     throw new Error(`No user API instances configured for type: ${type}`);
                 }
             } else if (instances.length === 0) {
-                throw new Error(`No API instances configured for type: ${type}`);
+                return [];
             }
 
             if (options.minVersion) {
@@ -220,11 +220,9 @@ export class LosslessAPI {
                             .clone()
                             .json()
                             .catch(() => null);
-                        if (errorData?.subStatus === 11002) {
-                            console.warn(`Auth failed on ${baseUrl}. Trying next instance...`);
-                            instanceIndex++;
-                            continue;
-                        }
+                        console.warn(`Auth failed (subStatus: ${errorData?.subStatus}) on ${baseUrl}. Trying next instance...`);
+                        instanceIndex++;
+                        continue;
                     }
 
                     if (response.status >= 500) {
@@ -242,6 +240,13 @@ export class LosslessAPI {
                     instanceIndex++;
                     await delay(200);
                 }
+            }
+
+            // All proxy instances failed — fall back to direct TIDAL API via HiFiClient
+            try {
+                return await HiFiClient.instance.query(relativePath);
+            } catch (hifiErr) {
+                console.warn(`HiFiClient fallback also failed for ${relativePath}:`, hifiErr);
             }
 
             throw lastError || new Error(`All API instances failed for: ${relativePath}`);
@@ -296,8 +301,19 @@ export class LosslessAPI {
             }
         }
 
+        const firstInstances = await getInstances(false);
+
+        if (firstInstances.length === 0) {
+            // No proxy instances available — try HiFiClient directly
+            try {
+                return await HiFiClient.instance.query(relativePath);
+            } catch (err) {
+                throw new Error(`No API instances configured for type: ${type}`);
+            }
+        }
+
         try {
-            return await tryInstances(await getInstances(false));
+            return await tryInstances(firstInstances);
         } catch (error) {
             if (nativeError && (type === 'streaming' || options.userInstancesOnly)) {
                 throw nativeError;
@@ -468,80 +484,6 @@ export class LosslessAPI {
                 return { ...track, album: { ...track.album, releaseDate: albumDateMap.get(track.album.id) } };
             }
             return track;
-        });
-    }
-
-    async enrichTracksWithAlbumCover(tracks, maxRequests = 20) {
-        if (!Array.isArray(tracks) || tracks.length === 0) return tracks;
-
-        const albumIdsToFetch = [];
-        for (const track of tracks) {
-            if (!track?.album?.cover && track?.album?.id && !albumIdsToFetch.includes(track.album.id)) {
-                albumIdsToFetch.push(track.album.id);
-            }
-        }
-
-        if (albumIdsToFetch.length === 0) return tracks;
-
-        const limitedIds = albumIdsToFetch.slice(0, maxRequests);
-
-        const coverMap = new Map();
-        const chunkSize = 5;
-        for (let i = 0; i < limitedIds.length; i += chunkSize) {
-            const chunk = limitedIds.slice(i, i + chunkSize);
-            const results = await Promise.allSettled(chunk.map((id) => this.getAlbum(id)));
-            for (let j = 0; j < results.length; j++) {
-                const r = results[j];
-                if (r.status === 'fulfilled' && r.value?.album?.cover) {
-                    coverMap.set(chunk[j], r.value.album.cover);
-                }
-            }
-        }
-
-        if (coverMap.size === 0) return tracks;
-
-        return tracks.map((track) => {
-            if (!track?.album?.cover && track?.album?.id && coverMap.has(track.album.id)) {
-                return { ...track, album: { ...track.album, cover: coverMap.get(track.album.id) } };
-            }
-            return track;
-        });
-    }
-
-    async enrichArtistsWithPicture(artists, maxRequests = 10) {
-        if (!Array.isArray(artists) || artists.length === 0) return artists;
-
-        const idsToFetch = [];
-        for (const artist of artists) {
-            if (!artist?.picture && artist?.id && !idsToFetch.includes(artist.id)) {
-                idsToFetch.push(artist.id);
-            }
-        }
-
-        if (idsToFetch.length === 0) return artists;
-
-        const limitedIds = idsToFetch.slice(0, maxRequests);
-
-        const pictureMap = new Map();
-        const chunkSize = 5;
-        for (let i = 0; i < limitedIds.length; i += chunkSize) {
-            const chunk = limitedIds.slice(i, i + chunkSize);
-            const results = await Promise.allSettled(chunk.map((id) => this.getArtist(id, { lightweight: true })));
-            for (let j = 0; j < results.length; j++) {
-                const r = results[j];
-                if (r.status === 'fulfilled' && r.value?.picture) {
-                    pictureMap.set(chunk[j], r.value.picture);
-                }
-            }
-        }
-
-        if (pictureMap.size === 0) return artists;
-
-        return artists.map((artist) => {
-            if (!artist?.picture && artist?.id && pictureMap.has(artist.id)) {
-                return { ...artist, picture: pictureMap.get(artist.id) };
-            }
-            return artist;
         });
     }
 
@@ -770,7 +712,9 @@ export class LosslessAPI {
             const data = await response.json();
             const normalized = this.normalizeSearchResponse(data, 'tracks');
             const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
-            const enrichedTracks = await this.enrichTracksWithAlbumCover(preparedTracks);
+            const enrichedTracks = await this.enrichTracksWithAlbumDates(
+                await this.enrichTracksWithAlbumCover(preparedTracks)
+            );
             const result = {
                 ...normalized,
                 items: enrichedTracks,
@@ -825,11 +769,9 @@ export class LosslessAPI {
             const response = await this.fetchWithRetry(`/search/?a=${encodeURIComponent(query)}`, options);
             const data = await response.json();
             const normalized = this.normalizeSearchResponse(data, 'artists');
-            const preparedArtists = normalized.items.map((a) => this.prepareArtist(a));
-            const enrichedArtists = await this.enrichArtistsWithPicture(preparedArtists);
             const result = {
                 ...normalized,
-                items: enrichedArtists,
+                items: normalized.items.map((a) => this.prepareArtist(a)),
             };
 
             if (!(response instanceof TidalResponse)) {
@@ -1066,12 +1008,7 @@ export class LosslessAPI {
 
         tracks = tracks.map((t) => {
             if (t.album) {
-                // Propagate the parent album's cover to each track's album sub-object when
-                // the API omits it in the per-track album object (common for album endpoints).
-                t.album = new TrackAlbum({
-                    ...t.album,
-                    cover: t.album.cover || album.cover,
-                });
+                t.album = new TrackAlbum(t.album);
             }
 
             return new Track(t);
@@ -1638,8 +1575,7 @@ export class LosslessAPI {
         }
 
         const shuffled = recommendedTracks.sort(() => 0.5 - Math.random());
-        const sliced = shuffled.slice(0, limit);
-        return this.enrichTracksWithAlbumCover(sliced);
+        return shuffled.slice(0, limit);
     }
 
     normalizeTrackResponse(apiResponse) {
@@ -1829,30 +1765,6 @@ export class LosslessAPI {
         }
     }
 
-    async getTrackFromDevMode(id, quality = 'LOSSLESS') {
-        const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');
-        const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
-        const params = new URLSearchParams({
-            id: String(id),
-            quality: requestedQuality,
-            adaptive: 'false',
-        });
-        for (const format of this.getTrackManifestFormats(quality)) {
-            params.append('formats', format);
-        }
-
-        const url = `${devBaseUrl}/trackManifests/?${params.toString()}`;
-        if (import.meta.env.DEV) {
-            console.log('[dev-mode]', url);
-        }
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Dev mode request failed: ${response.status} ${response.statusText}`);
-        }
-        const jsonResponse = await response.json();
-        return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, quality));
-    }
-
     async getTrack(id, quality = 'LOSSLESS', { adaptive = false } = {}) {
         const cacheKey = `${id}_${quality}_${adaptive ? 'adaptive' : 'fixed'}`;
         const cached = await this.cache.get('track', cacheKey);
@@ -1897,6 +1809,122 @@ export class LosslessAPI {
         return result;
     }
 
+    async getQobuzStreamUrl(isrc, quality = 'LOSSLESS') {
+        let qobuzInstances = [];
+        try {
+            qobuzInstances = await this.settings.getInstances('qobuz');
+        } catch {
+            // ignore
+        }
+
+        if (!qobuzInstances || qobuzInstances.length === 0) {
+            return null;
+        }
+
+        for (const instance of qobuzInstances) {
+            const rawUrl = typeof instance === 'string' ? instance : instance?.url;
+            if (!rawUrl || typeof rawUrl !== 'string') continue;
+            const baseUrl = rawUrl.replace(/\/+$/, '');
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+                const trackRes = await fetch(
+                    getProxyUrl(`${baseUrl}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`),
+                    {
+                        signal: controller.signal,
+                    }
+                );
+                clearTimeout(timeoutId);
+                if (!trackRes.ok) continue;
+                const trackJson = await trackRes.json();
+
+                const tracks = trackJson.data?.tracks?.items || [];
+                const match = tracks.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase()) || tracks[0];
+
+                if (match && match.id) {
+                    const qobuzTrackId = match.id;
+                    const qobuzQualityMap = {
+                        HI_RES_LOSSLESS: '27',
+                        LOSSLESS: '6',
+                        HIGH: '5',
+                        LOW: '5',
+                    };
+                    const qobuzQuality = qobuzQualityMap[quality] || '6';
+
+                    const streamController = new AbortController();
+                    const streamTimeoutId = setTimeout(() => streamController.abort(), 8000);
+
+                    const streamRes = await fetch(
+                        getProxyUrl(`${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`),
+                        { signal: streamController.signal }
+                    );
+                    clearTimeout(streamTimeoutId);
+                    if (!streamRes.ok) continue;
+                    const streamJson = await streamRes.json();
+
+                    // Skip preview-only results (sample:true) — e.g. our own
+                    // token-less qobuz-stream.js returns 30s previews — so we
+                    // fall through to a full-quality instance (qobuz.squid.wtf).
+                    if (streamJson.success && streamJson.data && streamJson.data.url && !streamJson.data.sample) {
+                        let rgInfo = null;
+                        if (match.audio_info) {
+                            rgInfo = {
+                                trackReplayGain: match.audio_info.replaygain_track_gain,
+                                trackPeakAmplitude: match.audio_info.replaygain_track_peak,
+                                albumReplayGain: match.audio_info.replaygain_album_gain,
+                                albumPeakAmplitude: match.audio_info.replaygain_album_peak,
+                            };
+                        }
+                        return { url: streamJson.data.url, rgInfo };
+                    }
+                }
+            } catch (e) {
+                console.warn(`Qobuz instance ${baseUrl} failed for ISRC ${isrc}:`, e);
+                continue;
+            }
+        }
+        return null;
+    }
+
+    async getQobuzStreamUrlByTrackId(qobuzTrackId, quality = 'LOSSLESS') {
+        let qobuzInstances = [];
+        try {
+            qobuzInstances = await this.settings.getInstances('qobuz');
+        } catch {
+            // ignore
+        }
+
+        if (!qobuzInstances || qobuzInstances.length === 0) return null;
+
+        const qobuzQualityMap = { HI_RES_LOSSLESS: '27', LOSSLESS: '6', HIGH: '5', LOW: '5' };
+        const qobuzQuality = qobuzQualityMap[quality] || '6';
+
+        for (const instance of qobuzInstances) {
+            const rawUrl = typeof instance === 'string' ? instance : instance?.url;
+            if (!rawUrl || typeof rawUrl !== 'string') continue;
+            const baseUrl = rawUrl.replace(/\/+$/, '');
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                const streamRes = await fetch(
+                    `${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`,
+                    { signal: controller.signal }
+                );
+                clearTimeout(timeoutId);
+                if (!streamRes.ok) continue;
+                const streamJson = await streamRes.json();
+                if (streamJson.success && streamJson.data?.url) {
+                    return { url: streamJson.data.url, rgInfo: null };
+                }
+            } catch (e) {
+                console.warn(`Qobuz instance ${baseUrl} failed for track ID ${qobuzTrackId}:`, e);
+                continue;
+            }
+        }
+        return null;
+    }
+
     getDeezerStreamFormat(quality = 'LOSSLESS') {
         const map = {
             HI_RES_LOSSLESS: 'FLAC',
@@ -1906,6 +1934,72 @@ export class LosslessAPI {
             NORMAL: 'MP3_128',
         };
         return map[quality] || map[normalizeQualityToken(quality)] || 'FLAC';
+    }
+
+    // Primary source. The server occasionally 500s on a resolved ID, and it only
+    // allows CORS from its own domains and localhost, so probe before trusting it.
+    async getTracksServerStreamUrl(id, track, quality) {
+        let result = null;
+        try {
+            result = await tracksStreamerAPI.resolveTrackStream(id, quality, { track });
+        } catch (err) {
+            console.debug('tracks.monochrome.st stream lookup failed:', err);
+        }
+        if (!result?.url) return null;
+
+        try {
+            const probe = await this.fetchWithTimeout(
+                result.url,
+                { headers: { Range: 'bytes=0-0' }, cache: 'no-store' },
+                6000
+            );
+            probe.body?.cancel().catch(() => {});
+            if (probe.ok) return result;
+            console.debug(`tracks.monochrome.st stream probe failed (${probe.status}) for ${id}`);
+        } catch (err) {
+            console.debug('tracks.monochrome.st stream probe failed:', err);
+        }
+        return null;
+    }
+
+    // Fork fallback chain for tracks tracks.monochrome.st can't serve:
+    // Unified Playback (TIDAL IDs only), then Deezer and the self-hosted Qobuz proxy by ISRC.
+    async getForkFallbackStreamUrl(id, track, quality) {
+        const neutralRg = { trackReplayGain: 0, trackPeakAmplitude: 1, albumReplayGain: 0, albumPeakAmplitude: 1 };
+
+        if (/^\d{1,15}$/.test(String(id))) {
+            try {
+                const unified = await this.getUnifiedPlaybackStreamUrl(id, quality, {
+                    preferAdaptiveAuto: true,
+                    track,
+                    intent: 'stream',
+                });
+                // Encrypted streams needed the SW decrypter upstream removed, so skip them.
+                if (unified?.url && !unified.decryptionKey) return unified;
+            } catch (err) {
+                console.debug('Unified Playback fallback failed:', err);
+            }
+        }
+
+        if (!track?.isrc) return null;
+
+        const deezer = await this.getDeezerStreamUrl(track.isrc, quality);
+        if (deezer?.url) {
+            return {
+                url: deezer.url,
+                rgInfo: neutralRg,
+                provider: 'deezer',
+                deezerFormat: deezer.format,
+                deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',
+            };
+        }
+
+        const qobuz = await this.getQobuzStreamUrl(track.isrc, quality);
+        if (qobuz?.url) {
+            return { url: qobuz.url, rgInfo: qobuz.rgInfo || neutralRg, provider: 'qobuz' };
+        }
+
+        return null;
     }
 
     async getDeezerStreamUrl(isrc, quality = 'LOSSLESS') {
@@ -2825,23 +2919,19 @@ export class LosslessAPI {
         const isApple = inputTrack?.provider === 'apple' || String(id || '').startsWith('apple:');
         const track = inputTrack || (id && !isApple ? await this.getTrackMetadata(id).catch(() => null) : null);
 
-        let streamResult = null;
-        try {
-            streamResult = await tracksStreamerAPI.resolveTrackStream(id, quality, { track });
-        } catch (err) {
-            console.debug('tracks.monochrome.st stream lookup failed in LosslessAPI:', err);
+        const tracksResult = await this.getTracksServerStreamUrl(id, track, quality);
+        if (tracksResult) {
+            this.streamCache.set(cacheKey, tracksResult);
+            return tracksResult;
         }
 
-        if (!streamResult?.url) {
-            const cleanId = String(id).replace(/^(?:tracks|mono):(?:track:)?/, '');
-            streamResult = tracksStreamerAPI.getStreamUrl(cleanId, quality, { track });
+        const fallbackResult = await this.getForkFallbackStreamUrl(id, track, quality);
+        if (fallbackResult) {
+            this.streamCache.set(cacheKey, fallbackResult);
+            return fallbackResult;
         }
 
-        if (streamResult?.url) {
-            this.streamCache.set(cacheKey, streamResult);
-            return streamResult;
-        }
-
+        notifyAudioSourceMissing();
         throw new Error(`Could not resolve stream URL for track ID: ${id}`);
     }
 
@@ -2919,37 +3009,37 @@ export class LosslessAPI {
         if (isVideo) {
             lookup = await this.getVideo(id);
         } else {
-            let streamResult = null;
-            try {
-                streamResult = await tracksStreamerAPI.resolveTrackStream(id, cleanQuality, { track });
-            } catch (error) {
-                console.debug('tracks.monochrome.st lookup failed during download enrichment:', error);
-            }
-
-            if (!streamResult?.url) {
-                const cleanId = String(id).replace(/^(?:tracks|mono):(?:track:)?/, '');
-                streamResult = tracksStreamerAPI.getStreamUrl(cleanId, cleanQuality, { track });
-            }
+            const streamResult =
+                (await this.getTracksServerStreamUrl(id, track, cleanQuality)) ||
+                (await this.getForkFallbackStreamUrl(id, track, cleanQuality));
 
             if (streamResult?.url) {
                 externalStreamUrl = streamResult.url;
                 externalRgInfo = streamResult.rgInfo;
                 externalStreamType = streamResult.playbackType || 'direct';
-                externalProvider = 'monochrome';
-                externalMimeType = streamResult.mimeType || 'audio/flac';
+                externalProvider = streamResult.provider || 'monochrome';
+                externalMimeType = streamResult.mimeType || null;
                 externalMediaMimeType = streamResult.mediaMimeType || externalMimeType;
                 externalSourceUrl = streamResult.sourceUrl || externalStreamUrl;
                 lookup = {
                     info: {
                         audioQuality: cleanQuality,
-                        trackReplayGain: 0,
-                        trackPeakAmplitude: 1,
-                        albumReplayGain: 0,
-                        albumPeakAmplitude: 1,
+                        trackReplayGain: externalRgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: externalRgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: externalRgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: externalRgInfo?.albumPeakAmplitude ?? 1,
                     },
                 };
             } else {
                 throw new Error(`Could not resolve audio stream for track ID: ${id}`);
+            }
+        }
+
+        if (!lookup) {
+            if (isVideo) {
+                lookup = await this.getVideo(id);
+            } else {
+                lookup = new PlaybackInfo(await this.getTrack(id, cleanQuality));
             }
         }
 
@@ -2965,18 +3055,12 @@ export class LosslessAPI {
             });
         }
 
-        if (
-            track.album?.id &&
-            (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null || !track.album?.cover)
-        ) {
+        if (track.album?.id && (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null)) {
             try {
                 const albumData = await this.getAlbum(track.album.id);
                 enrichedTrack.album = new EnrichedAlbum({
                     ...albumData.album,
                     ...enrichedTrack.album,
-                    // Preserve the full album's cover when the track's album cover is null/undefined,
-                    // since some API responses omit or null-out cover in the track's album sub-object.
-                    cover: enrichedTrack.album?.cover || albumData.album?.cover,
                 });
 
                 if (albumData.tracks?.length > 0) {
@@ -3289,6 +3373,43 @@ export class LosslessAPI {
             if (error.message === RATE_LIMIT_ERROR_MESSAGE) {
                 throw error;
             }
+
+            console.warn('Download via proxy instances failed, trying v2 manifest fallback:', error);
+
+            // Fallback: use TIDAL v2 OpenAPI trackManifests directly (app token, no proxy needed)
+            try {
+                const manifestResponse = await HiFiClient.instance.getTrackManifest(
+                    Number(id),
+                    { usage: 'DOWNLOAD', formats: ['FLAC_HIRES', 'FLAC', 'AACLC', 'HEAACV1'] },
+                    options.signal
+                );
+                const manifestData = await manifestResponse.json();
+                const manifestUri = manifestData?.data?.data?.attributes?.uri;
+
+                if (!manifestUri) throw new Error('No manifest URI in v2 response');
+
+                const downloader = new DashDownloader();
+                const blob = await downloader.downloadDashStream(getProxyUrl(manifestUri), {
+                    signal: options.signal,
+                    onProgress: options.onProgress,
+                    calculateDashBytes: options.calculateDashBytes ?? true,
+                });
+
+                if (options.triggerDownload ?? true) {
+                    const detectedExtension = await getExtensionFromBlob(blob);
+                    const ext = filename?.split('.').pop()?.toLowerCase();
+                    const finalFilename =
+                        ext && ext !== detectedExtension
+                            ? filename.replace(/\.[^.]+$/, `.${detectedExtension}`)
+                            : filename;
+                    triggerDownload(blob, finalFilename);
+                }
+
+                return blob;
+            } catch (fallbackError) {
+                console.error('v2 manifest fallback also failed:', fallbackError);
+            }
+
             throw new Error('Download failed. The stream may require a proxy.');
         }
     }
@@ -3317,6 +3438,43 @@ export class LosslessAPI {
         const formattedId = String(id).replace(/-/g, '/');
         const baseUrl = `https://resources.tidal.com/images/${formattedId}`;
         return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;
+    }
+
+    async enrichArtistsWithPicture(artists, maxRequests = 10) {
+        if (!Array.isArray(artists) || artists.length === 0) return artists;
+
+        const idsToFetch = [];
+        for (const artist of artists) {
+            if (!artist?.picture && artist?.id && !idsToFetch.includes(artist.id)) {
+                idsToFetch.push(artist.id);
+            }
+        }
+
+        if (idsToFetch.length === 0) return artists;
+
+        const limitedIds = idsToFetch.slice(0, maxRequests);
+
+        const pictureMap = new Map();
+        const chunkSize = 5;
+        for (let i = 0; i < limitedIds.length; i += chunkSize) {
+            const chunk = limitedIds.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map((id) => this.getArtist(id, { lightweight: true })));
+            for (let j = 0; j < results.length; j++) {
+                const r = results[j];
+                if (r.status === 'fulfilled' && r.value?.picture) {
+                    pictureMap.set(chunk[j], r.value.picture);
+                }
+            }
+        }
+
+        if (pictureMap.size === 0) return artists;
+
+        return artists.map((artist) => {
+            if (!artist?.picture && artist?.id && pictureMap.has(artist.id)) {
+                return { ...artist, picture: pictureMap.get(artist.id) };
+            }
+            return artist;
+        });
     }
 
     getArtistPictureUrl(id, size = '320') {
