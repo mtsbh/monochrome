@@ -32,6 +32,13 @@
   to = "/.netlify/functions/qobuz-stream"
   status = 200
 
+# tracks.monochrome.st only allows CORS from localhost and its own domains (see js/tracks-api.js).
+[[redirects]]
+  from = "/api/tracks/*"
+  to = "https://tracks.monochrome.st/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

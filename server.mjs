@@ -78,8 +78,7 @@ const loaded = new Map();
 async function loadHandler(name) {
     if (loaded.has(name)) return loaded.get(name);
     const fn = FUNCTIONS[name];
-    const handler =
-        fn.kind === 'v1' ? require(fn.file).handler : (await import(pathToFileURL(fn.file).href)).default;
+    const handler = fn.kind === 'v1' ? require(fn.file).handler : (await import(pathToFileURL(fn.file).href)).default;
     if (typeof handler !== 'function') throw new Error(`Function ${name} has no handler`);
     loaded.set(name, handler);
     return handler;
@@ -132,11 +131,16 @@ async function runV2(handler, req, url, body, res) {
 
     const response = await handler(request, { params: {}, geo: {}, ip: req.socket.remoteAddress });
     if (!(response instanceof Response)) throw new Error('Function did not return a Response');
+    sendResponse(res, response, req);
+}
 
+function sendResponse(res, response, req, dropHeaders = []) {
     const outHeaders = {};
     response.headers.forEach((value, key) => {
         // fetch() already decoded the body, so upstream encoding/length headers would be wrong.
-        if (key !== 'content-encoding' && key !== 'transfer-encoding') outHeaders[key] = value;
+        if (key !== 'content-encoding' && key !== 'transfer-encoding' && !dropHeaders.includes(key)) {
+            outHeaders[key] = value;
+        }
     });
     if (response.headers.get('content-encoding')) delete outHeaders['content-length'];
     res.writeHead(response.status, outHeaders);
@@ -146,6 +150,41 @@ async function runV2(handler, req, url, body, res) {
     res.on('close', () => stream.destroy());
     stream.on('error', () => res.destroy());
     stream.pipe(res);
+}
+
+// tracks.monochrome.st only sends CORS headers to localhost and its own domains, so when
+// the app is opened from any other host the client goes through here (see tracks-api.js).
+const TRACKS_UPSTREAM = 'https://tracks.monochrome.st';
+const TRACKS_PREFIX = '/api/tracks';
+const TRACKS_FORWARD_HEADERS = ['accept', 'accept-language', 'range', 'if-range', 'if-none-match', 'if-modified-since'];
+
+async function proxyTracks(req, res, url) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { Allow: 'GET, HEAD' }).end();
+        return;
+    }
+    // Concatenate rather than resolve, so a path like "//host" can't change the origin.
+    const target = new URL(TRACKS_UPSTREAM + (url.pathname.slice(TRACKS_PREFIX.length) || '/') + url.search);
+    if (target.origin !== TRACKS_UPSTREAM) {
+        res.writeHead(400).end('Bad request');
+        return;
+    }
+
+    const headers = {};
+    for (const name of TRACKS_FORWARD_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
+
+    // Seeking aborts audio range requests constantly; stop the upstream fetch with them.
+    const abort = new AbortController();
+    res.on('close', () => abort.abort());
+    try {
+        const response = await fetch(target, { method: req.method, headers, signal: abort.signal });
+        sendResponse(res, response, req, ['set-cookie']);
+    } catch (err) {
+        if (abort.signal.aborted) return;
+        console.error(`[tracks proxy ${target.pathname}]`, err.message);
+        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Upstream unavailable');
+    }
 }
 
 async function runFunction(name, req, res, url) {
@@ -192,6 +231,10 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
     try {
+        if (url.pathname === TRACKS_PREFIX || url.pathname.startsWith(`${TRACKS_PREFIX}/`)) {
+            await proxyTracks(req, res, url);
+            return;
+        }
         const fnMatch = url.pathname.match(/^\/\.netlify\/functions\/([\w-]+)\/?$/);
         const name = fnMatch ? fnMatch[1] : ROUTES[url.pathname.replace(/\/+$/, '')];
         if (name) {

@@ -5,7 +5,44 @@
  * Public Host: https://tracks.monochrome.st
  */
 
-export const TRACKS_API_BASE_URL = 'https://tracks.monochrome.st';
+export const TRACKS_UPSTREAM_URL = 'https://tracks.monochrome.st';
+
+/**
+ * tracks.monochrome.st only sends CORS headers to localhost and its own domains, so from
+ * any other host (LAN, Tailscale, *.netlify.app) API calls, streams and artwork go through
+ * the same-origin /api/tracks proxy (server.mjs, netlify.toml).
+ * @param {Location|undefined} loc
+ * @returns {string}
+ */
+export function resolveTracksBaseUrl(loc = globalThis.location) {
+    const host = loc?.hostname || '';
+    const direct =
+        !/^https?:$/.test(loc?.protocol || '') ||
+        /^(localhost|127\.0\.0\.1|\[::1\])$/.test(host) ||
+        /(^|\.)monochrome\.(tf|st)$/.test(host);
+    return direct ? TRACKS_UPSTREAM_URL : `${loc.origin}/api/tracks`;
+}
+
+export const TRACKS_API_BASE_URL = resolveTracksBaseUrl();
+
+/**
+ * Points upstream URLs embedded in API responses (artwork, avatars) at TRACKS_API_BASE_URL.
+ * @param {*} value
+ * @returns {*}
+ */
+export function rewriteTracksUrls(value) {
+    if (TRACKS_API_BASE_URL === TRACKS_UPSTREAM_URL) return value;
+    if (typeof value === 'string') {
+        return value.startsWith(`${TRACKS_UPSTREAM_URL}/`)
+            ? TRACKS_API_BASE_URL + value.slice(TRACKS_UPSTREAM_URL.length)
+            : value;
+    }
+    if (Array.isArray(value)) return value.map(rewriteTracksUrls);
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewriteTracksUrls(v)]));
+    }
+    return value;
+}
 
 /**
  * Cleans and normalizes string for fuzzy title/artist matching.
@@ -470,7 +507,7 @@ export class TracksStreamerAPI {
                 throw new Error(`Search request failed with status: ${response.status}`);
             }
 
-            const data = await response.json();
+            const data = rewriteTracksUrls(await response.json());
             const normalized = normalizeTracksSearchResults(data);
 
             // Index tracks, releases, and artists in local caches
@@ -520,7 +557,7 @@ export class TracksStreamerAPI {
             throw new Error(`Track search failed with status: ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = rewriteTracksUrls(await response.json());
         const rawTracks = data.tracks || [];
         const items = rawTracks.map(normalizeTracksTrack).filter(Boolean);
 
@@ -560,7 +597,7 @@ export class TracksStreamerAPI {
             throw new Error(`Release search failed with status: ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = rewriteTracksUrls(await response.json());
         const rawReleases = data.releases || [];
         const items = rawReleases.map(normalizeTracksRelease).filter(Boolean);
 
@@ -599,7 +636,7 @@ export class TracksStreamerAPI {
             throw new Error(`Artist search failed with status: ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = rewriteTracksUrls(await response.json());
         const rawArtists = data.artists || [];
         const items = rawArtists.map(normalizeTracksArtist).filter(Boolean);
 
@@ -665,7 +702,7 @@ export class TracksStreamerAPI {
                 throw new Error(`Album fetch failed with status: ${response.status}`);
             }
 
-            const data = await response.json();
+            const data = rewriteTracksUrls(await response.json());
             const album = normalizeTracksRelease(data);
 
             const tracks = (data.tracks || []).map((t) => {
@@ -719,7 +756,7 @@ export class TracksStreamerAPI {
                 throw new Error(`Artist fetch failed with status: ${response.status}`);
             }
 
-            const data = await response.json();
+            const data = rewriteTracksUrls(await response.json());
             const artist = normalizeTracksArtist(data);
 
             const albums = (data.albums || []).map(normalizeTracksRelease).filter(Boolean);

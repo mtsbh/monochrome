@@ -1,5 +1,6 @@
 //js/ui.js
 import { showNotification } from './downloads.js';
+import { TRACKS_API_BASE_URL } from './tracks-api.js';
 import {
     formatTime,
     createPlaceholder,
@@ -2688,7 +2689,7 @@ export class UIRenderer {
         const sidebarText = document.getElementById('sidebar-donate-goal-text');
 
         try {
-            const response = await fetch('https://tracks.monochrome.st/goal');
+            const response = await fetch(`${TRACKS_API_BASE_URL}/goal`);
             const data = await response.json();
             let percentage = 0;
 
