@@ -1,0 +1,26 @@
+# Self-hosted server.mjs (app + functions) instead of the static nginx image.
+#
+#   cd docker && docker compose -f docker-compose.server.yml up -d --build
+#
+# Secrets (QOBUZ_*, DISCOGS_TOKEN) are read from ../.env at runtime.
+# Binds to the host's loopback by default: reach it through an SSH tunnel
+# (ssh -L 8888:localhost:8888 <server>) and open http://localhost:8888 —
+# tracks.monochrome.st only accepts search requests from a localhost origin.
+# Set MONOCHROME_BIND=0.0.0.0 to expose it on the LAN/Tailscale instead.
+services:
+    monochrome-server:
+        build:
+            context: ..
+            dockerfile: docker/Dockerfile.server
+        container_name: monochrome-server
+        env_file:
+            - path: ../.env
+              required: false
+        environment:
+            # Override any MONOCHROME_HOST/PORT in .env: inside the container it
+            # must listen on all interfaces, on the port the image exposes.
+            MONOCHROME_HOST: 0.0.0.0
+            MONOCHROME_PORT: 8888
+        ports:
+            - '${MONOCHROME_BIND:-127.0.0.1}:${MONOCHROME_PUBLIC_PORT:-8888}:8888'
+        restart: unless-stopped

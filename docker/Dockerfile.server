@@ -1,0 +1,33 @@
+# Self-hosted image: builds the app and runs server.mjs, which serves dist/
+# and the netlify/ functions (labels, Qobuz, contributors, audio proxy).
+# Node >= 20.12 is required for process.loadEnvFile in server.mjs.
+FROM node:24-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+RUN npm run build:netlify
+
+FROM node:24-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    MONOCHROME_HOST=0.0.0.0 \
+    MONOCHROME_PORT=8888
+
+# The functions only use Node built-ins, so no node_modules at runtime.
+# package.json is needed for "type": "module".
+COPY package.json server.mjs ./
+COPY netlify ./netlify
+COPY --from=builder /app/dist ./dist
+
+USER node
+EXPOSE 8888
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8888/ || exit 1
+
+CMD ["node", "server.mjs"]
