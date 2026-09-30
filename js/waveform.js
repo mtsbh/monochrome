@@ -1,9 +1,13 @@
 // js/waveform.js
 
+const MAX_DECODE_BYTES = 120 * 1024 * 1024;
+
 export class WaveformGenerator {
     constructor() {
         this.cache = new Map();
         this.sampleCache = new Map();
+        this.generatedCache = new Map();
+        this.pendingGenerations = new Map();
     }
 
     async loadWaveformData(waveformObj, trackId) {
@@ -199,14 +203,28 @@ export class WaveformGenerator {
         };
     }
 
-    async getWaveform(url, trackId) {
+    async getWaveform(url, trackId, { signal } = {}) {
         if (this.cache.has(trackId)) {
             return this.cache.get(trackId);
         }
 
         try {
             const audioContext = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 44100);
-            const response = await fetch(url);
+            // tracks.monochrome.st intermittently 500s, and answers the browser's cache
+            // revalidation with 500 too, so bypass the HTTP cache and retry server errors.
+            let response = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+                response = await fetch(url, { signal, cache: 'no-store' });
+                if (response.status < 500) break;
+                response.body?.cancel().catch(() => {});
+            }
+            if (!response?.ok) return null;
+            // Decoding holds the whole track as float PCM; skip files that would need hundreds of MB.
+            if (Number(response.headers.get('content-length')) > MAX_DECODE_BYTES) {
+                response.body?.cancel().catch(() => {});
+                return null;
+            }
             const arrayBuffer = await response.arrayBuffer();
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
@@ -215,8 +233,59 @@ export class WaveformGenerator {
             this.cache.set(trackId, result);
             return result;
         } catch (error) {
-            console.error('Waveform generation failed:', error);
+            if (error?.name !== 'AbortError') console.warn('Waveform generation failed:', error);
             return null;
+        }
+    }
+
+    // Fallback for sources that ship no waveform (tracks.monochrome.st): decode the stream
+    // itself and render it in the same format as SoundCloud's PNG (black on transparent),
+    // so the seekbar and silence detection use it unchanged. Costs a second download.
+    async generateFromStream(streamInfo, trackId, { signal } = {}) {
+        if (!trackId || streamInfo?.playbackType !== 'direct' || !streamInfo.url) return null;
+        let url;
+        try {
+            url = new URL(streamInfo.url, window.location.href);
+        } catch {
+            return null;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
+        if (this.generatedCache.has(trackId)) return this.generatedCache.get(trackId);
+        if (this.pendingGenerations.has(trackId)) return this.pendingGenerations.get(trackId);
+
+        const generation = (async () => {
+            const waveform = await this.getWaveform(url.href, trackId, { signal });
+            if (!waveform?.peaks?.length) return null;
+
+            // 400 bars stay distinct at seekbar size; the curve adds contrast to the drawing
+            // only, so silence detection keeps the linear levels in `samples`.
+            const canvas = document.createElement('canvas');
+            canvas.width = 1200;
+            canvas.height = 200;
+            this.drawWaveform(
+                canvas,
+                waveform.peaks.map((peak) => peak ** 1.5)
+            );
+            const result = {
+                pngUrl: this.createMaskImageUrl(canvas),
+                jsonUrl: null,
+                samples: Array.from(waveform.peaks, (peak) => Math.round(peak * 255)),
+                durationSeconds: waveform.duration || null,
+            };
+
+            this.generatedCache.set(trackId, result);
+            if (this.generatedCache.size > 30) {
+                this.generatedCache.delete(this.generatedCache.keys().next().value);
+            }
+            return result;
+        })();
+
+        this.pendingGenerations.set(trackId, generation);
+        try {
+            return await generation;
+        } finally {
+            this.pendingGenerations.delete(trackId);
         }
     }
 
@@ -228,19 +297,19 @@ export class WaveformGenerator {
         const step = Math.floor(length / numPeaks);
         const stride = 8;
 
+        // RMS rather than the absolute peak: modern masters hit near-full peaks almost
+        // everywhere, which draws as a solid block.
         for (let i = 0; i < numPeaks; i++) {
-            let max = 0;
+            let sumSquares = 0;
+            let count = 0;
             const start = i * step;
             const end = start + step;
             for (let j = start; j < end; j += stride) {
                 const datum = chanData[j];
-                if (datum > max) {
-                    max = datum;
-                } else if (-datum > max) {
-                    max = -datum;
-                }
+                sumSquares += datum * datum;
+                count++;
             }
-            peaks[i] = max;
+            peaks[i] = count > 0 ? Math.sqrt(sumSquares / count) : 0;
         }
 
         let maxPeak = 0;

@@ -851,10 +851,14 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
     // Render SoundCloud's supplied PNG directly. It is a black waveform on a
     // transparent background, so CSS only needs to invert it for the dark UI.
     let waveformResizeObserver = null;
+    // Aborts a stream-decoding fallback when the track changes or waveforms are turned off.
+    let waveformGenerationAbort = null;
 
     const clearWaveformGeometry = (progressBar, playerControls) => {
         waveformResizeObserver?.disconnect();
         waveformResizeObserver = null;
+        waveformGenerationAbort?.abort();
+        waveformGenerationAbort = null;
         if (progressBar) {
             progressBar.style.webkitMaskImage = '';
             progressBar.style.maskImage = '';
@@ -942,10 +946,25 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                     player.currentWaveform ||
                     player.currentTrack?.waveform ||
                     null;
-                const waveData = await waveformGenerator.loadWaveformData(waveformObj, targetTrackId);
+                let waveData = await waveformGenerator.loadWaveformData(waveformObj, targetTrackId);
                 let samples = waveData?.samples || null;
                 if (!samples?.length && waveData?.pngUrl) {
                     samples = await waveformGenerator.loadWaveformPngSamples(waveData.pngUrl);
+                }
+
+                // No supplied waveform (e.g. tracks.monochrome.st): build one from the audio.
+                // Only while the seekbar shows it, since it downloads the track a second time.
+                if (showWaveform && !samples?.length && !waveData?.pngUrl) {
+                    waveformGenerationAbort ??= new AbortController();
+                    const generated = await waveformGenerator.generateFromStream(
+                        player.currentStreamInfo,
+                        targetTrackId,
+                        { signal: waveformGenerationAbort.signal }
+                    );
+                    if (generated) {
+                        waveData = generated;
+                        samples = generated.samples;
+                    }
                 }
 
                 if (player.currentTrack && player.currentTrack.id === targetTrackId) {
