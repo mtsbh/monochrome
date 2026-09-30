@@ -5464,7 +5464,9 @@ export class UIRenderer {
                 const res = await fetch(`/.netlify/functions/qobuz-album?id=${encodeURIComponent(albumId)}`);
                 if (!res.ok) throw new Error(`Qobuz album fetch failed: ${res.status}`);
                 ({ album, tracks } = await res.json());
-                tracks.forEach(t => { if (t.isrc) this.api.registerQobuzTrack(t.id, t.isrc); });
+                tracks.forEach((t) => {
+                    if (t.isrc) this.api.registerQobuzTrack(t.id, t.isrc);
+                });
             } else {
                 ({ album, tracks } = await this.api.getAlbum(albumId, provider));
             }
@@ -5585,13 +5587,17 @@ export class UIRenderer {
             const labelName = structuredLabel?.name || extractLabelName(firstCopyright);
             const labelHref = structuredLabel?.id
                 ? `/label-id/${structuredLabel.id}`
-                : labelName ? `/label/${encodeURIComponent(labelName)}` : null;
-            const labelHtml = labelName && labelHref
-                ? ` • <a href="${labelHref}" class="label-link" title="${escapeHtml(firstCopyright || '')}">${escapeHtml(labelName)}</a>`
-                : (firstCopyright ? ` • ${escapeHtml(firstCopyright)}` : '');
+                : labelName
+                  ? `/label/${encodeURIComponent(labelName)}`
+                  : null;
+            const labelHtml =
+                labelName && labelHref
+                    ? ` • <a href="${labelHref}" class="label-link" title="${escapeHtml(firstCopyright || '')}">${escapeHtml(labelName)}</a>`
+                    : firstCopyright
+                      ? ` • ${escapeHtml(firstCopyright)}`
+                      : '';
             prodEl.innerHTML =
-                `By <a href="/artist/${album.artist.id}">${escapeHtml(album.artist.name)}</a>` +
-                labelHtml;
+                `By <a href="/artist/${album.artist.id}">${escapeHtml(album.artist.name)}</a>` + labelHtml;
 
             fetchAOTY(`/album?artist=${encodeURIComponent(album.artist.name)}&name=${encodeURIComponent(album.title)}`)
                 .then((data) => {
@@ -6459,14 +6465,19 @@ export class UIRenderer {
 
     _getLabelArtCache() {
         if (!this._labelArtCache) {
-            try { this._labelArtCache = JSON.parse(localStorage.getItem('label_art_cache') || '{}'); }
-            catch { this._labelArtCache = {}; }
+            try {
+                this._labelArtCache = JSON.parse(localStorage.getItem('label_art_cache') || '{}');
+            } catch {
+                this._labelArtCache = {};
+            }
         }
         return this._labelArtCache;
     }
 
     _saveLabelArtCache() {
-        try { localStorage.setItem('label_art_cache', JSON.stringify(this._labelArtCache)); } catch {}
+        try {
+            localStorage.setItem('label_art_cache', JSON.stringify(this._labelArtCache));
+        } catch {}
     }
 
     getSavedLabels() {
@@ -6485,7 +6496,9 @@ export class UIRenderer {
                 return deduped;
             }
             return raw;
-        } catch { return []; }
+        } catch {
+            return [];
+        }
     }
 
     _persistSavedLabels(labels) {
@@ -6496,7 +6509,7 @@ export class UIRenderer {
 
     saveLabel(name, id = null) {
         const saved = this.getSavedLabels();
-        const idx = saved.findIndex(e => typeof e === 'object' ? e.name === name : e === name);
+        const idx = saved.findIndex((e) => (typeof e === 'object' ? e.name === name : e === name));
         if (idx === -1) {
             saved.push({ name, ...(id ? { id } : {}), addedAt: Date.now() });
         } else if (typeof saved[idx] !== 'object') {
@@ -6510,13 +6523,13 @@ export class UIRenderer {
     }
 
     unsaveLabel(name) {
-        this._persistSavedLabels(this.getSavedLabels().filter(e =>
-            typeof e === 'object' ? e.name !== name : e !== name
-        ));
+        this._persistSavedLabels(
+            this.getSavedLabels().filter((e) => (typeof e === 'object' ? e.name !== name : e !== name))
+        );
     }
 
     isLabelSaved(name) {
-        return this.getSavedLabels().some(e => typeof e === 'object' ? e.name === name : e === name);
+        return this.getSavedLabels().some((e) => (typeof e === 'object' ? e.name === name : e === name));
     }
 
     async loadSavedLabelsFromCloud() {
@@ -6540,7 +6553,9 @@ export class UIRenderer {
             const merged = [...byName.values()];
             localStorage.setItem('saved_labels', JSON.stringify(merged));
             if (merged.length !== cloud.length) syncManager.setSavedLabels(merged).catch(() => {});
-        } catch { /* non-critical */ }
+        } catch {
+            /* non-critical */
+        }
     }
 
     renderLabelsPage() {
@@ -6555,7 +6570,9 @@ export class UIRenderer {
             else navigate(`/label/${encodeURIComponent(q)}`);
         };
         btn.onclick = go;
-        input.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') go();
+        };
 
         const listEl = document.getElementById('saved-labels-list');
         const rowsEl = document.getElementById('saved-labels-chips');
@@ -6628,7 +6645,7 @@ export class UIRenderer {
             while (fetchQueue.length) {
                 const task = fetchQueue.shift();
                 await task();
-                await new Promise(r => setTimeout(r, 1050));
+                await new Promise((r) => setTimeout(r, 1050));
             }
             fetchRunning = false;
         };
@@ -6691,16 +6708,18 @@ export class UIRenderer {
         };
 
         const renderList = (list) => {
-            rowsEl.innerHTML = list.map(entry => {
-                const name = typeof entry === 'object' ? entry.name : entry;
-                const id = typeof entry === 'object' ? entry.id : null;
-                return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+            rowsEl.innerHTML = list
+                .map((entry) => {
+                    const name = typeof entry === 'object' ? entry.name : entry;
+                    const id = typeof entry === 'object' ? entry.id : null;
+                    return `<div class="label-row" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
                     <div class="label-row-cover"><div class="label-row-cover-placeholder">${SVG_DISC(14)}</div></div>
                     <span class="label-row-name">${escapeHtml(name)}</span>
                     ${!id ? `<span class="label-row-badge" title="No Qobuz ID — paste the Qobuz URL to fix">!</span>` : ''}
                     <button class="label-row-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
                 </div>`;
-            }).join('');
+                })
+                .join('');
             rowsEl.querySelectorAll('.label-row').forEach((row, i) => {
                 const entry = list[i];
                 const name = typeof entry === 'object' ? entry.name : entry;
@@ -6710,15 +6729,17 @@ export class UIRenderer {
         };
 
         const renderGrid = (list) => {
-            rowsEl.innerHTML = list.map(entry => {
-                const name = typeof entry === 'object' ? entry.name : entry;
-                const id = typeof entry === 'object' ? entry.id : null;
-                return `<div class="label-card" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
+            rowsEl.innerHTML = list
+                .map((entry) => {
+                    const name = typeof entry === 'object' ? entry.name : entry;
+                    const id = typeof entry === 'object' ? entry.id : null;
+                    return `<div class="label-card" data-label="${escapeHtml(name)}" ${id ? `data-label-id="${id}"` : ''}>
                     <div class="label-card-cover-placeholder">${SVG_DISC(32)}</div>
                     <div class="label-card-info"><div class="label-card-name">${escapeHtml(name)}</div></div>
                     <button class="label-card-remove" data-label="${escapeHtml(name)}" title="Remove">${SVG_CLOSE(12)}</button>
                 </div>`;
-            }).join('');
+                })
+                .join('');
             rowsEl.querySelectorAll('.label-card').forEach((card, i) => {
                 const entry = list[i];
                 const name = typeof entry === 'object' ? entry.name : entry;
@@ -6737,17 +6758,23 @@ export class UIRenderer {
         render();
 
         if (sortEl) sortEl.onchange = render;
-        if (viewListBtn) viewListBtn.onclick = () => { applyView('list'); render(); };
-        if (viewGridBtn) viewGridBtn.onclick = () => { applyView('grid'); render(); };
+        if (viewListBtn)
+            viewListBtn.onclick = () => {
+                applyView('list');
+                render();
+            };
+        if (viewGridBtn)
+            viewGridBtn.onclick = () => {
+                applyView('grid');
+                render();
+            };
 
         input.focus();
     }
 
     async renderLabelPage(labelName, opts = {}) {
         if (!opts.directId) {
-            const savedEntry = this.getSavedLabels().find(e =>
-                typeof e === 'object' && e.name === labelName && e.id
-            );
+            const savedEntry = this.getSavedLabels().find((e) => typeof e === 'object' && e.name === labelName && e.id);
             if (savedEntry) {
                 return this.renderLabelPage(labelName, { ...opts, directId: savedEntry.id });
             }
@@ -6789,7 +6816,9 @@ export class UIRenderer {
                 albumsContainer.innerHTML = html;
             }
             const playedAlbumIds = new Set(JSON.parse(localStorage.getItem('played-album-ids') || '[]'));
-            const currentAlbumId = this.player?.currentTrack?.album?.id ? String(this.player.currentTrack.album.id) : null;
+            const currentAlbumId = this.player?.currentTrack?.album?.id
+                ? String(this.player.currentTrack.album.id)
+                : null;
             albums.forEach((album) => {
                 const el = albumsContainer.querySelector(`[data-album-id="${album.id}"]`);
                 if (el) {
@@ -6852,7 +6881,7 @@ export class UIRenderer {
                     loadMoreBtn.textContent = 'Loading…';
                     try {
                         const more = await fetchPage(nextOffset);
-                        nextOffset = more.nextOffset ?? (nextOffset + limit);
+                        nextOffset = more.nextOffset ?? nextOffset + limit;
                         renderAlbums(more.albums, true);
                         metaEl.textContent = formatMeta(more);
                         if (!more.hasMore || !more.albums.length) {
@@ -6871,7 +6900,7 @@ export class UIRenderer {
         } catch (err) {
             if (err.message.includes('not found') || err.message.includes('404')) {
                 // Name lookup failed — check if we have a saved ID for this label
-                const savedEntry = this.getSavedLabels().find(e =>
+                const savedEntry = this.getSavedLabels().find((e) =>
                     typeof e === 'object' ? e.name === labelName : false
                 );
                 if (savedEntry?.id && !opts.directId) {
@@ -6888,7 +6917,9 @@ export class UIRenderer {
                         <p>Failed to load label catalog${err?.message ? `: ${escapeHtml(err.message)}` : '.'}</p>
                         <button class="btn-secondary" id="label-retry-btn" style="margin-top: 0.5rem;">Retry</button>
                     </div>`;
-                document.getElementById('label-retry-btn')?.addEventListener('click', () => this.renderLabelPage(labelName, opts));
+                document
+                    .getElementById('label-retry-btn')
+                    ?.addEventListener('click', () => this.renderLabelPage(labelName, opts));
                 metaEl.textContent = '';
             }
             console.error('renderLabelPage error:', err);
