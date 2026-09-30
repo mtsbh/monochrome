@@ -39,6 +39,8 @@
   status = 200
   force = true
 
+# SPA fallback. Keep it here, not in public/_redirects: Netlify applies _redirects
+# first, so a catch-all there would shadow every /api rule above.
 [[redirects]]
   from = "/*"
   to = "/index.html"
